@@ -560,12 +560,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     accumulated_partial_text = ""
                     index += 1
 
-                self.send_data_to_websocket(
-                    index=index,
-                    data_format=output_format,
-                    is_message_end=True,
-                )
-
         # Process JSON input if we have tool use
         if tool_use_data and json_input_parts:
             try:
@@ -596,6 +590,12 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 tool_use_data, input_messages, stream_event=stream_event
             )
             return
+
+        self.send_data_to_websocket(
+            index=index,
+            data_format=output_format,
+            is_message_end=True,
+        )
 
         while self.assistant_messages:
             assistant_message = self.assistant_messages.pop()
