@@ -121,7 +121,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 self.model_setting.update(model_setting)
 
             timestamp = pendulum.now("UTC").int_timestamp
-            run_id = f"run-antropic-{self.model_setting["model"]}-{timestamp}-{str(uuid.uuid4())[:8]}"
+            run_id = f"run-antropic-{self.model_setting['model']}-{timestamp}-{str(uuid.uuid4())[:8]}"
 
             response = self.invoke_model(
                 **{
