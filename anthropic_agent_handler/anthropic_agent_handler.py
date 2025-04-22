@@ -61,6 +61,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 "system": agent["instructions"],
             },
         )
+        self.assistant_messages = []
 
     def invoke_model(self, **kwargs: Dict[str, Any]) -> Any:
         """
@@ -415,6 +416,11 @@ class AnthropicEventHandler(AIAgentEventHandler):
             for content in response.content:
                 if content.type == "text":
                     contents.append({"type": content.type, "text": content.text})
+                    self.assistant_messages.append(
+                        {
+                            "content": content.text,
+                        }
+                    )
 
                 elif content.type == "tool_use":
                     tool_call = {
@@ -434,10 +440,15 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     input_messages.append({"role": "assistant", "content": contents})
                     self.handle_function_call(tool_call, input_messages)
         else:
+            content = response.content[0].text
+            while self.assistant_messages:
+                assistant_message = self.assistant_messages.pop()
+                content = assistant_message["content"] + " " + content
+
             self.final_output = {
                 "message_id": response.id,
                 "role": response.role,
-                "content": response.content[0].text,
+                "content": content,
             }
 
     def handle_stream(
@@ -467,6 +478,14 @@ class AnthropicEventHandler(AIAgentEventHandler):
             .get("type", "text")
         )
         index = 0
+        if self.assistant_messages:
+            index = self.assistant_messages[-1]["index"]
+            self.send_data_to_websocket(
+                index=index,
+                data_format=output_format,
+                chunk_delta=" ",
+            )
+            index += 1
 
         for chunk in response_stream:
 
@@ -563,10 +582,22 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     ],
                 }
             )
+            self.assistant_messages.append(
+                {
+                    "content": self.accumulated_text,
+                    "index": index,
+                }
+            )
             self.handle_function_call(
                 tool_use_data, input_messages, stream_event=stream_event
             )
             return
+
+        while self.assistant_messages:
+            assistant_message = self.assistant_messages.pop()
+            self.accumulated_text = (
+                assistant_message["content"] + " " + self.accumulated_text
+            )
 
         self.final_output = {
             "message_id": message_id,
