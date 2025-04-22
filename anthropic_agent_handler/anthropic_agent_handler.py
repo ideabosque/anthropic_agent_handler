@@ -53,7 +53,11 @@ class AnthropicEventHandler(AIAgentEventHandler):
         self.client = anthropic.Anthropic(api_key=agent["configuration"].get("api_key"))
         self.model_setting = dict(
             {
-                k: float(v) if isinstance(v, Decimal) else v
+                k: (
+                    int(v)
+                    if k == "max_tokens"
+                    else float(v) if isinstance(v, Decimal) else v
+                )
                 for k, v in agent["configuration"].items()
                 if k not in ["api_key", "text"]
             },
