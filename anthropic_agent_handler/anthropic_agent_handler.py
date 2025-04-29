@@ -25,12 +25,9 @@ from silvaengine_utility import Utility
 # ----------------------------
 class AnthropicEventHandler(AIAgentEventHandler):
     """
-    Handles conversations and function calls with the Anthropic API by:
-    - Managing streaming text responses
-    - Processing function calls in responses
-    - Executing functions and handling results
-    - Maintaining conversation history
-    - Storing final outputs
+    A handler class for managing interactions with the Anthropic API.
+    Provides functionality for streaming responses, handling function calls,
+    maintaining conversation history, and managing outputs.
     """
 
     def __init__(
@@ -40,12 +37,13 @@ class AnthropicEventHandler(AIAgentEventHandler):
         **setting: Dict[str, Any],
     ) -> None:
         """
-        Initialize the Anthropic event handler
+        Initializes the Anthropic event handler with required configuration.
+        Sets up logging, API client, and model settings.
 
         Args:
-            logger: Logger for debug/info messages
-            agent: Agent configuration and tools
-            setting: Additional handler settings
+            logger: Logger instance for recording events and errors
+            agent: Dictionary containing agent configuration and available tools
+            setting: Additional configuration settings as key-value pairs
         """
         AIAgentEventHandler.__init__(self, logger, agent, **setting)
 
@@ -69,16 +67,17 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
     def invoke_model(self, **kwargs: Dict[str, Any]) -> Any:
         """
-        Call the Anthropic API with messages and handle responses
+        Makes an API call to the Anthropic model with provided messages.
+        Handles both streaming and non-streaming requests.
 
         Args:
-            kwargs: Input messages and streaming configuration
+            kwargs: Dictionary containing input messages and streaming configuration
 
         Returns:
-            Model response object
+            Response from the Anthropic API
 
         Raises:
-            Exception: If API call fails
+            Exception: If the API call fails for any reason
         """
         try:
             messages = list(
@@ -102,16 +101,20 @@ class AnthropicEventHandler(AIAgentEventHandler):
         model_setting: Dict[str, Any] = None,
     ) -> Optional[str]:
         """
-        Send request to Anthropic API with streaming or non-streaming mode
+        Primary method for sending requests to the Anthropic API.
+        Supports both streaming and non-streaming modes, with optional model configuration overrides.
 
         Args:
-            input_messages: Conversation history and current question
-            queue: Queue for streaming events, enables streaming if provided
-            stream_event: Event to signal streaming completion
-            model_setting: Optional model configuration overrides
+            input_messages: List of messages representing conversation history and current query
+            queue: Optional queue for handling streaming responses
+            stream_event: Optional event for signaling stream completion
+            model_setting: Optional dictionary to override default model settings
 
         Returns:
-            Response ID for non-streaming requests, None for streaming
+            String containing response ID for non-streaming requests, None for streaming
+
+        Raises:
+            Exception: If request processing fails
         """
         try:
             if not self.client:
@@ -144,7 +147,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 )
                 return None
 
-            self.handle_output(response, input_messages)
+            self.handle_response(response, input_messages)
             return run_id
 
         except Exception as e:
@@ -152,23 +155,18 @@ class AnthropicEventHandler(AIAgentEventHandler):
             raise Exception(f"Failed to process model request: {str(e)}")
 
     def handle_function_call(
-        self,
-        tool_call: Any,
-        input_messages: List[Dict[str, Any]],
-        stream_event: threading.Event = None,
+        self, tool_call: Any, input_messages: List[Dict[str, Any]]
     ) -> None:
         """
-        Process and execute function calls from model responses by:
-        1. Extracting function details
-        2. Running the function with arguments
-        3. Recording execution results
-        4. Updating conversation history
-        5. Continuing conversation flow
+        Comprehensive handler for processing and executing function calls from model responses.
+        Manages the entire lifecycle of a function call including setup, execution, and result handling.
 
         Args:
-            tool_call: Function call details from model
-            input_messages: Conversation history to update
-            stream_event: Event for streaming completion
+            tool_call: Object containing function call details from the model
+            input_messages: Current conversation history to be updated
+
+        Returns:
+            Updated input messages list
 
         Raises:
             ValueError: For invalid tool calls
@@ -209,12 +207,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 function_call_data, function_output, input_messages
             )
 
-            # Continue conversation
-            self.logger.info(
-                f"[handle_function_call][{function_call_data['name']}] Continuing conversation"
-            )
-            self._continue_conversation(input_messages, stream_event)
-
             if self._run is None:
                 self._short_term_memory.append(
                     {
@@ -235,16 +227,19 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     }
                 )
 
+            return input_messages
+
         except Exception as e:
             self.logger.error(f"Error in handle_function_call: {e}")
             raise
 
     def _record_function_call_start(self, function_call_data: Dict[str, Any]) -> None:
         """
-        Store initial function call metadata in async storage
+        Records the initiation of a function call in the async storage system.
+        Creates an initial record with basic function metadata.
 
         Args:
-            function_call_data: Function call details to record
+            function_call_data: Dictionary containing function call metadata
         """
         self.invoke_async_funct(
             "async_insert_update_tool_call",
@@ -259,13 +254,14 @@ class AnthropicEventHandler(AIAgentEventHandler):
         self, function_call_data: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Process and validate function arguments
+        Processes and validates function arguments from the model response.
+        Adds required metadata and performs error handling.
 
         Args:
-            function_call_data: Raw function call data
+            function_call_data: Raw function call data from model
 
         Returns:
-            Processed arguments with endpoint ID
+            Processed and validated arguments dictionary
 
         Raises:
             ValueError: If argument processing fails
@@ -294,17 +290,18 @@ class AnthropicEventHandler(AIAgentEventHandler):
         self, function_call_data: Dict[str, Any], arguments: Dict[str, Any]
     ) -> Any:
         """
-        Execute requested function and handle results
+        Executes the requested function with provided arguments.
+        Handles function lookup, execution, and result processing.
 
         Args:
-            function_call_data: Function metadata
-            arguments: Processed function arguments
+            function_call_data: Metadata about the function to execute
+            arguments: Processed arguments to pass to the function
 
         Returns:
-            Function output or error message
+            Function execution result or error message
 
         Raises:
-            ValueError: If function not supported
+            ValueError: If requested function is not supported
         """
         agent_function = self.get_function(function_call_data["name"])
         if not agent_function:
@@ -354,12 +351,13 @@ class AnthropicEventHandler(AIAgentEventHandler):
         input_messages: List[Dict[str, Any]],
     ) -> None:
         """
-        Add function call results to conversation history
+        Updates the conversation history with function call results.
+        Formats and appends function output as a user message.
 
         Args:
-            function_call_data: Function call details
-            function_output: Function execution results
-            input_messages: Conversation history to update
+            function_call_data: Metadata about the executed function
+            function_output: Result from function execution
+            input_messages: Current conversation history to update
         """
 
         input_messages.append(
@@ -377,41 +375,18 @@ class AnthropicEventHandler(AIAgentEventHandler):
             }
         )  # Append the function response
 
-    def _continue_conversation(
-        self,
-        input_messages: List[Dict[str, Any]],
-        stream_event: threading.Event = None,
-    ) -> None:
-        """
-        Resume conversation after function execution
-
-        Args:
-            input_messages: Updated conversation history
-            stream_event: Event for streaming completion
-        """
-        response = self.invoke_model(
-            **{
-                "input": input_messages,
-                "stream": bool(stream_event),
-            }
-        )
-
-        if stream_event:
-            self.handle_stream(response, input_messages, stream_event)
-        else:
-            self.handle_output(response, input_messages)
-
-    def handle_output(
+    def handle_response(
         self,
         response: Any,
         input_messages: List[Dict[str, Any]],
     ) -> None:
         """
-        Process single response from model
+        Processes a complete response from the model.
+        Handles both text responses and tool use cases.
 
         Args:
-            response: Model response object
-            input_messages: Conversation history to update
+            response: Complete response object from the model
+            input_messages: Current conversation history to update
         """
         self.logger.info("Processing output: %s", response)
 
@@ -442,7 +417,13 @@ class AnthropicEventHandler(AIAgentEventHandler):
                         },
                     )
                     input_messages.append({"role": "assistant", "content": contents})
-                    self.handle_function_call(tool_call, input_messages)
+                    input_messages = self.handle_function_call(
+                        tool_call, input_messages
+                    )
+                    response = self.invoke_model(
+                        **{"input": input_messages, "stream": False}
+                    )
+                    self.handle_response(response, input_messages)
         else:
             content = response.content[0].text
             while self.assistant_messages:
@@ -462,12 +443,13 @@ class AnthropicEventHandler(AIAgentEventHandler):
         stream_event: threading.Event = None,
     ) -> None:
         """
-        Process streaming response chunks from model
+        Processes streaming responses from the model chunk by chunk.
+        Handles text content, tool use, and maintains state across chunks.
 
         Args:
-            response_stream: Streaming response iterator
-            input_messages: Conversation history to update
-            stream_event: Event to signal streaming completion
+            response_stream: Iterator yielding response chunks
+            input_messages: Optional conversation history to update
+            stream_event: Optional event to signal stream completion
         """
         message_id = None
         json_input_parts = []
@@ -586,8 +568,15 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     "index": index,
                 }
             )
-            self.handle_function_call(
-                tool_use_data, input_messages, stream_event=stream_event
+            input_messages = self.handle_function_call(tool_use_data, input_messages)
+            response = self.invoke_model(
+                **{
+                    "input": input_messages,
+                    "stream": bool(stream_event),
+                }
+            )
+            self.handle_stream(
+                response, input_messages=input_messages, stream_event=stream_event
             )
             return
 
