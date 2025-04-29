@@ -388,7 +388,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
             response: Complete response object from the model
             input_messages: Current conversation history to update
         """
-        self.logger.info("Processing output: %s", response)
 
         contents = []
         if response.stop_reason == "tool_use":
@@ -553,28 +552,40 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
         # Handle tool usage if detected
         if stop_reason == "tool_use" and tool_use_data:
+            if self.accumulated_text:
+                content = [
+                    {"type": "text", "text": self.accumulated_text},
+                    tool_use_data,
+                ]
+
+                self.assistant_messages.append(
+                    {
+                        "content": self.accumulated_text,
+                        "index": index,
+                    }
+                )
+            else:
+                content = [tool_use_data]
             input_messages.append(
                 {
                     "role": "assistant",
-                    "content": [
-                        {"type": "text", "text": self.accumulated_text},
-                        tool_use_data,
-                    ],
+                    "content": content,
                 }
             )
-            self.assistant_messages.append(
-                {
-                    "content": self.accumulated_text,
-                    "index": index,
-                }
-            )
+
             input_messages = self.handle_function_call(tool_use_data, input_messages)
-            response = self.invoke_model(
-                **{
-                    "input": input_messages,
-                    "stream": bool(stream_event),
-                }
-            )
+            try:
+                response = self.invoke_model(
+                    **{
+                        "input": input_messages,
+                        "stream": bool(stream_event),
+                    }
+                )
+            except Exception as e:
+                print(input_messages[-2])
+                print(input_messages[-1])
+                print(f"Error invoking model: {e}")
+                raise e
             self.handle_stream(
                 response, input_messages=input_messages, stream_event=stream_event
             )
