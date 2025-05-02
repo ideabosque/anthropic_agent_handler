@@ -215,6 +215,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                             "content": Utility.json_dumps(
                                 {
                                     "tool": {
+                                        "tool_call_id": function_call_data["id"],
                                         "tool_type": function_call_data["type"],
                                         "name": function_call_data["name"],
                                         "arguments": arguments,
