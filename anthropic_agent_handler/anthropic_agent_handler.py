@@ -425,15 +425,24 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     )
                     self.handle_response(response, input_messages)
         else:
-            content = response.content[0].text
+            assistant_message_content = ""
             while self.assistant_messages:
                 assistant_message = self.assistant_messages.pop()
-                content = assistant_message["content"] + " " + content
+                assistant_message_content += assistant_message["content"]
+
+            final_content = ""
+            for content in response.content:
+                if not content.text:
+                    continue
+                final_content += content.text
+
+            if assistant_message_content:
+                final_content = assistant_message_content + " " + final_content
 
             self.final_output = {
                 "message_id": response.id,
                 "role": response.role,
-                "content": content,
+                "content": final_content,
             }
 
     def handle_stream(
@@ -481,6 +490,9 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
             # Handle text content
             elif chunk.type == "content_block_delta" and hasattr(chunk.delta, "text"):
+                if not chunk.delta.text:
+                    continue
+
                 print(chunk.delta.text, end="", flush=True)
                 if output_format in ["json_object", "json_schema"]:
                     accumulated_partial_json += chunk.delta.text
@@ -575,18 +587,12 @@ class AnthropicEventHandler(AIAgentEventHandler):
             )
 
             input_messages = self.handle_function_call(tool_use_data, input_messages)
-            try:
-                response = self.invoke_model(
-                    **{
-                        "input": input_messages,
-                        "stream": bool(stream_event),
-                    }
-                )
-            except Exception as e:
-                print(input_messages[-2])
-                print(input_messages[-1])
-                print(f"Error invoking model: {e}")
-                raise e
+            response = self.invoke_model(
+                **{
+                    "input": input_messages,
+                    "stream": bool(stream_event),
+                }
+            )
             self.handle_stream(
                 response, input_messages=input_messages, stream_event=stream_event
             )
@@ -598,10 +604,14 @@ class AnthropicEventHandler(AIAgentEventHandler):
             is_message_end=True,
         )
 
+        assistant_message_content = ""
         while self.assistant_messages:
             assistant_message = self.assistant_messages.pop()
+            assistant_message_content += assistant_message["content"]
+
+        if assistant_message_content:
             self.accumulated_text = (
-                assistant_message["content"] + " " + self.accumulated_text
+                assistant_message_content + " " + self.accumulated_text
             )
 
         self.final_output = {
