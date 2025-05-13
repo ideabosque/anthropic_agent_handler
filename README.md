@@ -1,6 +1,6 @@
 # 🧠 AnthropicEventHandler
 
-The `AnthropicEventHandler` is a concrete implementation of the `AIAgentEventHandler` base class designed to interface with Anthropic Claude models. It orchestrates message formatting, model invocation, tool integration, streaming, and threading within the AI agent execution pipeline.
+The `AnthropicEventHandler` is a concrete implementation of the ![`AIAgentEventHandler`](https://github.com/ideabosque/ai_agent_handler) base class designed to interface with Anthropic Claude models. It orchestrates message formatting, model invocation, tool integration, streaming, and threading within the AI agent execution pipeline.
 
 This handler enables a **stateless, multi-turn AI orchestration** system built to support tools like `get_weather_forecast`.
 
