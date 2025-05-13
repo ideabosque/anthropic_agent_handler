@@ -446,7 +446,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
     def handle_stream(
         self,
-        response_stream,
+        response_stream: Any,
         input_messages: List[Dict[str, Any]] = None,
         stream_event: threading.Event = None,
     ) -> None:
