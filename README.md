@@ -109,7 +109,6 @@ def invoke_model(self, **kwargs: Dict[str, Any]) -> Any:
   "tool_call_role": "assistant"
 }
 ```
----
 
 ---
 ## 💬 Full-Scale Chatbot Scripts
