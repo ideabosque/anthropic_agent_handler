@@ -474,7 +474,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
         index = 0
         if self.assistant_messages:
             index = self.assistant_messages[-1]["index"]
-            self.send_data_to_websocket(
+            self.send_data_to_stream(
                 index=index,
                 data_format=output_format,
                 chunk_delta=" ",
@@ -510,7 +510,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     if len(accumulated_partial_text) >= int(
                         self.setting.get("accumulated_partial_text_buffer", "10")
                     ):
-                        self.send_data_to_websocket(
+                        self.send_data_to_stream(
                             index=index,
                             data_format=output_format,
                             chunk_delta=accumulated_partial_text,
@@ -545,7 +545,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
             elif chunk.type == "message_stop":
                 if len(accumulated_partial_text) > 0:
-                    self.send_data_to_websocket(
+                    self.send_data_to_stream(
                         index=index,
                         data_format=output_format,
                         chunk_delta=accumulated_partial_text,
@@ -597,7 +597,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             )
             return
 
-        self.send_data_to_websocket(
+        self.send_data_to_stream(
             index=index,
             data_format=output_format,
             is_message_end=True,
