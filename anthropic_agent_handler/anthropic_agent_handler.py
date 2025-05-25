@@ -47,7 +47,26 @@ class AnthropicEventHandler(AIAgentEventHandler):
         """
         AIAgentEventHandler.__init__(self, logger, agent, **setting)
 
-        self.client = anthropic.Anthropic(api_key=agent["configuration"].get("api_key"))
+        if all(
+            setting.get(k) for k in ["aws_access_key", "aws_secret_key", "aws_region"]
+        ):
+            aws_credentials = {
+                "aws_access_key": setting["aws_access_key"],
+                "aws_secret_key": setting["aws_secret_key"],
+                "aws_region": setting["aws_region"],
+            }
+            self.client = anthropic.AnthropicBedrock(**aws_credentials)
+        elif all(setting.get(k) for k in ["project_id", "region"]):
+            vertex_credentials = {
+                "project_id": setting["project_id"],
+                "region": setting["region"],
+            }
+            self.client = anthropic.AnthropicVertex(**vertex_credentials)
+        else:
+            self.client = anthropic.Anthropic(
+                api_key=agent["configuration"].get("api_key")
+            )
+
         self.model_setting = dict(
             {
                 k: (
