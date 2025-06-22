@@ -4,17 +4,22 @@ from __future__ import annotations
 
 __author__ = "bibow"
 
+import base64
 import json
 import logging
 import threading
 import traceback
 import uuid
 from decimal import Decimal
+from io import BytesIO
 from queue import Queue
 from typing import Any, Dict, List, Optional
 
 import anthropic
+import httpx
 import pendulum
+from anthropic.types.beta import FileMetadata
+from httpx import Response
 
 from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility import Utility
@@ -64,7 +69,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             self.client = anthropic.AnthropicVertex(**vertex_credentials)
         else:
             self.client = anthropic.Anthropic(
-                api_key=agent["configuration"].get("api_key")
+                api_key=self.agent["configuration"].get("api_key")
             )
 
         self.model_setting = dict(
@@ -74,11 +79,11 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     if k == "max_tokens"
                     else float(v) if isinstance(v, Decimal) else v
                 )
-                for k, v in agent["configuration"].items()
+                for k, v in self.agent["configuration"].items()
                 if k not in ["api_key", "text"]
             },
             **{
-                "system": agent["instructions"],
+                "system": self.agent["instructions"],
             },
         )
         self.assistant_messages = []
@@ -101,12 +106,26 @@ class AnthropicEventHandler(AIAgentEventHandler):
             messages = list(
                 filter(lambda x: bool(x["content"]) == True, kwargs["input"])
             )
-            return self.client.messages.create(
-                **dict(
-                    self.model_setting,
-                    **{"messages": messages, "stream": kwargs["stream"]},
+
+            betas = self._get_betas(messages)
+            if betas:
+                return self.client.beta.messages.create(
+                    **dict(
+                        self.model_setting,
+                        **{
+                            "messages": messages,
+                            "stream": kwargs["stream"],
+                            "betas": betas,
+                        },
+                    )
                 )
-            )
+            else:
+                return self.client.messages.create(
+                    **dict(
+                        self.model_setting,
+                        **{"messages": messages, "stream": kwargs["stream"]},
+                    )
+                )
         except Exception as e:
             self.logger.error(f"Error invoking model: {str(e)}")
             raise Exception(f"Failed to invoke model: {str(e)}")
@@ -116,6 +135,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
         input_messages: List[Dict[str, Any]],
         queue: Queue = None,
         stream_event: threading.Event = None,
+        input_files: List[str, Any] = [],
         model_setting: Dict[str, Any] = None,
     ) -> Optional[str]:
         """
@@ -148,6 +168,9 @@ class AnthropicEventHandler(AIAgentEventHandler):
             timestamp = pendulum.now("UTC").int_timestamp
             run_id = f"run-antropic-{self.model_setting['model']}-{timestamp}-{str(uuid.uuid4())[:8]}"
 
+            if input_files:
+                input_messages = self._process_input_files(input_files, input_messages)
+
             response = self.invoke_model(
                 **{
                     "input": input_messages,
@@ -171,6 +194,90 @@ class AnthropicEventHandler(AIAgentEventHandler):
         except Exception as e:
             self.logger.error(f"Error in ask_model: {str(e)}")
             raise Exception(f"Failed to process model request: {str(e)}")
+
+    def _get_betas(self, input_messages: List[Dict[str, Any]]) -> List[str]:
+        """
+        Check if input messages contain file content.
+
+        Args:
+            input_messages: List of message dictionaries to check
+
+        Returns:
+            bool: True if messages contain file content, False otherwise
+        """
+        betas = []
+        if "mcp_servers" in self.model_setting:
+            betas.append("mcp-client-2025-04-04")
+        for message in input_messages:
+            if isinstance(message.get("content"), list):
+                for content in message["content"]:
+                    if (
+                        content.get("type") == "document"
+                        and "files-api-2025-04-14" not in betas
+                    ):
+                        betas.append("files-api-2025-04-14")
+                    elif (
+                        content.get("type") == "container_upload"
+                        and "code-execution-2025-05-22" not in betas
+                    ):
+                        betas.append("code-execution-2025-05-22")
+        return betas
+
+    def _process_input_files(
+        self, input_files: List[Dict[str, Any]], input_messages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Process and upload input files, attaching them to either code interpreter or user message.
+
+        Args:
+            input_files: List of file dictionaries containing file data
+            input_messages: List of conversation messages
+
+        Returns:
+            Updated input_messages with file references
+        """
+        code_execution_tool = next(
+            (
+                tool
+                for tool in self.model_setting.get("tools", [])
+                if tool.get("type") == "code_execution_20250522"
+            ),
+            None,
+        )
+
+        # Upload each file to OpenAI and store metadata
+        file_ids = []
+        for input_file in input_files:
+            uploaded_file = self.insert_file(**input_file)
+            file_ids.append(uploaded_file.id)
+            self.uploaded_files.append(
+                {
+                    "file_id": uploaded_file.id,
+                    "code_execution_tool": True if code_execution_tool else False,
+                }
+            )
+
+        # If code interpreter not available, attach to user message
+        if input_messages and input_messages[-1]["role"] == "user":
+            # Construct message content with original text and file references
+            message_content = [{"type": "text", "text": input_messages[-1]["content"]}]
+
+            if code_execution_tool:
+                message_content.extend(
+                    {"type": "container_upload", "file_id": file_id}
+                    for file_id in file_ids
+                )
+
+            else:
+                message_content.extend(
+                    {"type": "document", "source": {"type": "file", "file_id": file_id}}
+                    for file_id in file_ids
+                )
+
+            # Update the last message with combined content
+            input_messages[-1]["content"] = message_content
+
+        return input_messages
 
     def handle_function_call(
         self, tool_call: Any, input_messages: List[Dict[str, Any]]
@@ -401,7 +508,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
     ) -> None:
         """
         Processes a complete response from the model.
-        Handles both text responses and tool use cases.
+        Handles both text responses, tool use cases, and MCP tool calls.
 
         Args:
             response: Complete response object from the model
@@ -449,8 +556,35 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 assistant_message_content += assistant_message["content"]
 
             final_content = ""
+            output_files = []
             for content in response.content:
-                if not content.text:
+                # Handle MCP tool use blocks
+                if content.type == "mcp_tool_use":
+                    self.logger.info(
+                        f"MCP tool call received - ID: {content.id}, Name: {content.name}, Server: {content.server_name}, Input: {content.input}."
+                    )
+                    continue
+                    # Note: MCP tools are handled automatically by the API
+                    # No need to manually execute them like regular tools
+                # Handle MCP tool result blocks
+                elif content.type == "mcp_tool_result":
+                    self.logger.info(
+                        f"MCP tool result received - Tool Use ID: {content.tool_use_id}, Content: {content.content}"
+                    )
+                    continue
+                elif content.type == "code_execution_tool_result":
+                    if content.content.type == "code_execution_result":
+                        for file in content.content.content:
+                            output_files.append({"file_id": file["file_id"]})
+                    continue
+                elif content.type == "BetaServerToolUseBlock":
+                    continue
+                elif content.type == "server_tool_use":
+                    continue
+                elif not hasattr(content, "text"):
+                    self.logger.error(
+                        f"Unexpected content type in response: {content.type}"
+                    )
                     continue
                 final_content += content.text
 
@@ -461,6 +595,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 "message_id": response.id,
                 "role": response.role,
                 "content": final_content,
+                "output_files": output_files,
             }
 
     def handle_stream(
@@ -471,7 +606,10 @@ class AnthropicEventHandler(AIAgentEventHandler):
     ) -> None:
         """
         Processes streaming responses from the model chunk by chunk.
-        Handles text content, tool use, and maintains state across chunks.
+        Handles text content, tool use, MCP tool calls, and maintains state across chunks.
+
+        Note: MCP tools are processed automatically by the MCP connector and don't require
+        manual result handling or recursive calls.
 
         Args:
             response_stream: Iterator yielding response chunks
@@ -482,6 +620,9 @@ class AnthropicEventHandler(AIAgentEventHandler):
         json_input_parts = []
         stop_reason = None
         tool_use_data = None
+        mcp_tool_use_data = None
+        mcp_tool_result_data = None
+        output_files = []
         self.accumulated_text = ""
         accumulated_partial_json = ""
         accumulated_partial_text = ""
@@ -522,6 +663,8 @@ class AnthropicEventHandler(AIAgentEventHandler):
                             output_format,
                         )
                     )
+                elif mcp_tool_result_data:
+                    mcp_tool_result_data["content"] += chunk.delta.text
                 else:
                     self.accumulated_text += chunk.delta.text
                     accumulated_partial_text += chunk.delta.text
@@ -529,7 +672,8 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     index, accumulated_partial_text = self.process_text_content(
                         index, accumulated_partial_text, output_format
                     )
-            # Handle tool use start
+
+            # Handle regular tool use start
             elif (
                 chunk.type == "content_block_start"
                 and hasattr(chunk.content_block, "type")
@@ -542,7 +686,53 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     "input": {},  # Will be populated from JSON deltas
                 }
 
-            # Handle tool input JSON parts
+            #! Handle MCP tool use start
+            elif (
+                chunk.type == "content_block_start"
+                and hasattr(chunk.content_block, "type")
+                and chunk.content_block.type == "mcp_tool_call"
+            ):
+                mcp_tool_use_data = {
+                    "id": chunk.content_block.id,
+                    "server_name": chunk.content_block.server_name,
+                    "name": chunk.content_block.name,
+                    "input": {},  # Will be populated from JSON deltas
+                }
+
+            #! Handle MCP tool result blocks
+            elif (
+                chunk.type == "content_block_start"
+                and hasattr(chunk.content_block, "type")
+                and chunk.content_block.type == "mcp_tool_result"
+            ):
+                mcp_tool_result_data = {
+                    "tool_use_id": chunk.content_block.tool_use_id,
+                    "is_error": chunk.content_block.is_error,
+                    "content": (
+                        chunk.content_block.content
+                        if hasattr(chunk.content_block, "content")
+                        else ""
+                    ),
+                }
+                if chunk.content_block.is_error:
+                    self.logger.info(
+                        f"MCP tool result received - Tool Use ID: {mcp_tool_result_data['tool_use_id']}, Error: {mcp_tool_result_data['content']}"
+                    )
+                    raise Exception(
+                        f"MCP tool error: {mcp_tool_result_data['content']}"
+                    )
+            elif (
+                chunk.type == "content_block_start"
+                and hasattr(chunk.content_block, "type")
+                and chunk.content_block.type == "code_execution_tool_result"
+            ):
+                # Handle code execution results in streaming
+                if hasattr(chunk.content_block, "content"):
+                    # Look for files in the execution result
+                    for file in chunk.content_block.content.contnet:
+                        output_files.append({"file_id": file["file_id"]})
+
+            # Handle tool input JSON parts (for both regular and MCP tools)
             elif (
                 chunk.type == "content_block_delta"
                 and hasattr(chunk.delta, "type")
@@ -564,16 +754,22 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     accumulated_partial_text = ""
                     index += 1
 
-        # Process JSON input if we have tool use
-        if tool_use_data and json_input_parts:
+        # Process JSON input if we have tool use (regular or MCP)
+        if (tool_use_data or mcp_tool_use_data) and json_input_parts:
             try:
                 # Join JSON parts and parse
                 json_str = "".join(json_input_parts)
-                tool_use_data["input"] = Utility.json_loads(json_str)
-            except json.JSONDecodeError:
-                print("\nError parsing tool input JSON")
+                parsed_input = Utility.json_loads(json_str)
 
-        # Handle tool usage if detected
+                if tool_use_data:
+                    tool_use_data["input"] = parsed_input
+                elif mcp_tool_use_data:
+                    mcp_tool_use_data["input"] = parsed_input
+
+            except json.JSONDecodeError:
+                raise Exception("\nError parsing tool input JSON")
+
+        # Handle regular tool usage
         if stop_reason == "tool_use" and tool_use_data:
             if self.accumulated_text:
                 content = [
@@ -608,6 +804,19 @@ class AnthropicEventHandler(AIAgentEventHandler):
             )
             return
 
+        # Handle MCP tool usage - MCP tools are processed automatically by the connector
+        # We just need to track them for logging/display purposes
+        elif mcp_tool_use_data:
+            # MCP tools are handled automatically, no recursive call needed
+            self.logger.info(
+                f"MCP tool '{mcp_tool_use_data.get('name')}' from server '{mcp_tool_use_data.get('server_name')}' was executed"
+            )
+        elif mcp_tool_result_data:
+            # MCP tool results are handled automatically, no need to process them here
+            self.logger.info(
+                f"MCP tool result received - Tool Use ID: {mcp_tool_result_data.get('tool_use_id')}, Content: {mcp_tool_result_data.get('content')}"
+            )
+
         self.send_data_to_stream(
             index=index,
             data_format=output_format,
@@ -628,8 +837,55 @@ class AnthropicEventHandler(AIAgentEventHandler):
             "message_id": message_id,
             "role": "assistant",
             "content": self.accumulated_text,
+            "output_files": output_files,
         }
 
         # Signal that streaming has finished
         if stream_event:
             stream_event.set()
+
+    def insert_file(self, **kwargs: Dict[str, Any]) -> FileMetadata:
+        if "encoded_content" in kwargs:
+            encoded_content = kwargs["encoded_content"]
+            # Decode the Base64 string
+            decoded_content = base64.b64decode(encoded_content)
+
+            # Save the decoded content into a BytesIO object
+            content_io = BytesIO(decoded_content)
+
+            # Assign a filename to the BytesIO object
+            content_io.name = kwargs["filename"]
+        elif "file_uri" in kwargs:
+            content_io = BytesIO(httpx.get(kwargs["file_uri"]).content)
+            content_io.name = kwargs["filename"]
+        else:
+            raise Exception("No file content provided")
+
+        file = self.client.beta.files.upload(
+            file=(kwargs["filename"], content_io, kwargs["mime_type"]),
+        )
+        return file
+
+    def get_file(self, **kwargs: Dict[str, Any]) -> Dict[str, Any]:
+
+        file = self.client.beta.files.retrieve_metadata(kwargs["file_id"])
+        uploaded_file = {
+            "id": file.id,
+            "type": file.type,
+            "filename": file.filename,
+            "size_bytes": file.size_bytes,
+            "created_at": pendulum.from_timestamp(file.created_at, tz="UTC"),
+            "mime_type": file.mime_type,
+            "downloadable": file.downloadable,
+        }
+        if (
+            "encoded_content" in kwargs
+            and kwargs["encoded_content"] == True
+            and file.downloadable
+        ):
+            response: Response = self.client.beta.files.download(kwargs["file_id"])
+            content = response.content  # Get the actual bytes data)
+            # Convert the content to a Base64-encoded string
+            uploaded_file["encoded_content"] = base64.b64encode(content).decode("utf-8")
+
+        return uploaded_file
