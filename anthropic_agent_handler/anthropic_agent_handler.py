@@ -759,10 +759,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             try:
                 # Join JSON parts and parse
                 json_str = "".join(json_input_parts)
-                if json_str == "":
-                    parsed_input = {}
-                else:
-                    parsed_input = Utility.json_loads(json_str)
+                parsed_input = Utility.json_loads(json_str)
 
                 if tool_use_data:
                     tool_use_data["input"] = parsed_input
