@@ -18,11 +18,10 @@ from typing import Any, Dict, List, Optional
 import anthropic
 import httpx
 import pendulum
-from anthropic.types.beta import FileMetadata
 from httpx import Response
 
 from ai_agent_handler import AIAgentEventHandler
-from silvaengine_utility import Utility
+from silvaengine_utility import Utility, convert_decimal_to_number
 
 
 # ----------------------------
@@ -82,9 +81,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 for k, v in self.agent["configuration"].items()
                 if k not in ["api_key", "text"]
             },
-            **{
-                "system": self.agent["instructions"],
-            },
+            **{"system": [{"type": "text", "text": self.agent["instructions"]}]},
         )
         self.assistant_messages = []
 
@@ -106,6 +103,8 @@ class AnthropicEventHandler(AIAgentEventHandler):
             messages = list(
                 filter(lambda x: bool(x["content"]) == True, kwargs["input"])
             )
+            # Convert any Decimal values to numbers for JSON serialization
+            messages = convert_decimal_to_number(messages)
 
             betas = self._get_betas(messages)
             if betas:
@@ -209,6 +208,13 @@ class AnthropicEventHandler(AIAgentEventHandler):
         betas = []
         if "mcp_servers" in self.model_setting:
             betas.append("mcp-client-2025-04-04")
+
+        if any(
+            tool["name"] == "code_execution"
+            for tool in self.model_setting.get("tools", [])
+        ):
+            betas.append("code-execution-2025-08-25")
+
         for message in input_messages:
             if isinstance(message.get("content"), list):
                 for content in message["content"]:
@@ -219,9 +225,9 @@ class AnthropicEventHandler(AIAgentEventHandler):
                         betas.append("files-api-2025-04-14")
                     elif (
                         content.get("type") == "container_upload"
-                        and "code-execution-2025-05-22" not in betas
+                        and "code-execution-2025-08-25" not in betas
                     ):
-                        betas.append("code-execution-2025-05-22")
+                        betas.append("code-execution-2025-08-25")
         return betas
 
     def _process_input_files(
@@ -845,7 +851,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
         if stream_event:
             stream_event.set()
 
-    def insert_file(self, **kwargs: Dict[str, Any]) -> FileMetadata:
+    def insert_file(self, **kwargs: Dict[str, Any]) -> Any:
         if "encoded_content" in kwargs:
             encoded_content = kwargs["encoded_content"]
             # Decode the Base64 string
