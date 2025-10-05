@@ -11,6 +11,7 @@ import threading
 import traceback
 import uuid
 from decimal import Decimal
+from enum import Enum
 from io import BytesIO
 from queue import Queue
 from typing import Any, Dict, List, Optional
@@ -22,6 +23,13 @@ from httpx import Response
 
 from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility import Utility, convert_decimal_to_number
+
+
+class AnthropicBetaVersion(str, Enum):
+    """Enum for Anthropic API beta versions"""
+    MCP_CLIENT = "mcp-client-2025-04-04"
+    CODE_EXECUTION = "code-execution-2025-08-25"
+    FILES_API = "files-api-2025-04-14"
 
 
 # ----------------------------
@@ -207,27 +215,27 @@ class AnthropicEventHandler(AIAgentEventHandler):
         """
         betas = []
         if "mcp_servers" in self.model_setting:
-            betas.append("mcp-client-2025-04-04")
+            betas.append(AnthropicBetaVersion.MCP_CLIENT.value)
 
         if any(
             tool["name"] == "code_execution"
             for tool in self.model_setting.get("tools", [])
         ):
-            betas.append("code-execution-2025-08-25")
+            betas.append(AnthropicBetaVersion.CODE_EXECUTION.value)
 
         for message in input_messages:
             if isinstance(message.get("content"), list):
                 for content in message["content"]:
                     if (
                         content.get("type") == "document"
-                        and "files-api-2025-04-14" not in betas
+                        and AnthropicBetaVersion.FILES_API.value not in betas
                     ):
-                        betas.append("files-api-2025-04-14")
+                        betas.append(AnthropicBetaVersion.FILES_API.value)
                     elif (
                         content.get("type") == "container_upload"
-                        and "code-execution-2025-08-25" not in betas
+                        and AnthropicBetaVersion.CODE_EXECUTION.value not in betas
                     ):
-                        betas.append("code-execution-2025-08-25")
+                        betas.append(AnthropicBetaVersion.CODE_EXECUTION.value)
         return betas
 
     def _process_input_files(
