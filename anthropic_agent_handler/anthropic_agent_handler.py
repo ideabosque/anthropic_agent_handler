@@ -27,6 +27,7 @@ from silvaengine_utility import Utility, convert_decimal_to_number
 
 class AnthropicBetaVersion(str, Enum):
     """Enum for Anthropic API beta versions"""
+
     MCP_CLIENT = "mcp-client-2025-04-04"
     CODE_EXECUTION = "code-execution-2025-08-25"
     FILES_API = "files-api-2025-04-14"
@@ -409,7 +410,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
         """
         try:
             arguments = function_call_data.get("arguments", {})
-            arguments["endpoint_id"] = self._endpoint_id
 
             return arguments
 
