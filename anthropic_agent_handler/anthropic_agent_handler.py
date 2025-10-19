@@ -166,7 +166,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
         self.assistant_messages = []
 
         # Enable/disable timeline logging (default: enabled for backward compatibility)
-        self.enable_timeline_log = setting.get("enable_timeline_log", True)
+        self.enable_timeline_log = setting.get("enable_timeline_log", False)
 
         # Initialize timeline tracking
         self._global_start_time = None
