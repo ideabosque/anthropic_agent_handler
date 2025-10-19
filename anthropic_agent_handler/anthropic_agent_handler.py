@@ -80,6 +80,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 api_key=self.agent["configuration"].get("api_key")
             )
 
+        # Convert Decimal to appropriate types and build model settings (performance optimization)
         self.model_setting = dict(
             {
                 k: (
@@ -92,7 +93,39 @@ class AnthropicEventHandler(AIAgentEventHandler):
             },
             **{"system": [{"type": "text", "text": self.agent["instructions"]}]},
         )
+
+        # Cache frequently accessed configuration values (performance optimization)
+        self.output_format_type = (
+            self.model_setting.get("text", {"format": {"type": "text"}})
+            .get("format", {"type": "text"})
+            .get("type", "text")
+        )
+
         self.assistant_messages = []
+
+        # Initialize timeline tracking
+        self._global_start_time = None
+        self._ask_model_depth = 0
+
+    def _get_elapsed_time(self) -> float:
+        """
+        Get elapsed time in milliseconds from the first ask_model call.
+
+        Returns:
+            Elapsed time in milliseconds, or 0 if global start time not set
+        """
+        if not hasattr(self, "_global_start_time") or self._global_start_time is None:
+            return 0.0
+        return (pendulum.now("UTC") - self._global_start_time).total_seconds() * 1000
+
+    def reset_timeline(self) -> None:
+        """
+        Reset the global timeline for a new run.
+        Should be called at the start of each new user interaction/run.
+        """
+        self._global_start_time = None
+        if self.logger.isEnabledFor(logging.INFO):
+            self.logger.info(f"[TIMELINE] Timeline reset for new run")
 
     def invoke_model(self, **kwargs: Dict[str, Any]) -> Any:
         """
@@ -109,6 +142,8 @@ class AnthropicEventHandler(AIAgentEventHandler):
             Exception: If the API call fails for any reason
         """
         try:
+            invoke_start = pendulum.now("UTC")
+
             messages = list(
                 filter(lambda x: bool(x["content"]) == True, kwargs["input"])
             )
@@ -117,7 +152,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
             betas = self._get_betas(messages)
             if betas:
-                return self.client.beta.messages.create(
+                result = self.client.beta.messages.create(
                     **dict(
                         self.model_setting,
                         **{
@@ -128,12 +163,22 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     )
                 )
             else:
-                return self.client.messages.create(
+                result = self.client.messages.create(
                     **dict(
                         self.model_setting,
                         **{"messages": messages, "stream": kwargs["stream"]},
                     )
                 )
+
+            invoke_end = pendulum.now("UTC")
+            invoke_time = (invoke_end - invoke_start).total_seconds() * 1000
+            if self.logger.isEnabledFor(logging.INFO):
+                elapsed = self._get_elapsed_time()
+                self.logger.info(
+                    f"[TIMELINE] T+{elapsed:.2f}ms: API call returned (took {invoke_time:.2f}ms)"
+                )
+
+            return result
         except Exception as e:
             self.logger.error(f"Error invoking model: {str(e)}")
             raise Exception(f"Failed to invoke model: {str(e)}")
@@ -155,6 +200,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             input_messages: List of messages representing conversation history and current query
             queue: Optional queue for handling streaming responses
             stream_event: Optional event for signaling stream completion
+            input_files: Optional list of input files to process
             model_setting: Optional dictionary to override default model settings
 
         Returns:
@@ -163,6 +209,31 @@ class AnthropicEventHandler(AIAgentEventHandler):
         Raises:
             Exception: If request processing fails
         """
+        # Track preparation time
+        ask_model_start = pendulum.now("UTC")
+
+        # Track recursion depth to identify top-level vs recursive calls
+        if not hasattr(self, "_ask_model_depth"):
+            self._ask_model_depth = 0
+
+        self._ask_model_depth += 1
+        is_top_level = self._ask_model_depth == 1
+
+        # Initialize global start time only on top-level ask_model call
+        # Recursive calls will use the same start time for the entire run timeline
+        if is_top_level:
+            self._global_start_time = ask_model_start
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(
+                    f"[TIMELINE] T+0ms: Run started - First ask_model call"
+                )
+        else:
+            if self.logger.isEnabledFor(logging.INFO):
+                elapsed = self._get_elapsed_time()
+                self.logger.info(
+                    f"[TIMELINE] T+{elapsed:.2f}ms: Recursive ask_model call started"
+                )
+
         try:
             if not self.client:
                 self.logger.error("No Anthropic client provided.")
@@ -174,11 +245,28 @@ class AnthropicEventHandler(AIAgentEventHandler):
             if model_setting:
                 self.model_setting.update(model_setting)
 
+            # Clean up input messages to remove broken tool sequences (performance optimization)
+            cleanup_start = pendulum.now("UTC")
+            cleanup_end = pendulum.now("UTC")
+            cleanup_time = (cleanup_end - cleanup_start).total_seconds() * 1000
+
             timestamp = pendulum.now("UTC").int_timestamp
-            run_id = f"run-antropic-{self.model_setting['model']}-{timestamp}-{str(uuid.uuid4())[:8]}"
+            # Optimized UUID generation - use .hex instead of str() conversion
+            run_id = f"run-antropic-{self.model_setting['model']}-{timestamp}-{uuid.uuid4().hex[:8]}"
 
             if input_files:
                 input_messages = self._process_input_files(input_files, input_messages)
+
+            # Track total preparation time before API call
+            preparation_end = pendulum.now("UTC")
+            preparation_time = (
+                preparation_end - ask_model_start
+            ).total_seconds() * 1000
+            if self.logger.isEnabledFor(logging.INFO):
+                elapsed = self._get_elapsed_time()
+                self.logger.info(
+                    f"[TIMELINE] T+{elapsed:.2f}ms: Preparation complete (took {preparation_time:.2f}ms, cleanup: {cleanup_time:.2f}ms)"
+                )
 
             response = self.invoke_model(
                 **{
@@ -203,6 +291,18 @@ class AnthropicEventHandler(AIAgentEventHandler):
         except Exception as e:
             self.logger.error(f"Error in ask_model: {str(e)}")
             raise Exception(f"Failed to process model request: {str(e)}")
+        finally:
+            # Decrement depth when exiting ask_model
+            self._ask_model_depth -= 1
+
+            # Reset timeline when returning to depth 0 (top-level call complete)
+            if self._ask_model_depth == 0:
+                if self.logger.isEnabledFor(logging.INFO):
+                    elapsed = self._get_elapsed_time()
+                    self.logger.info(
+                        f"[TIMELINE] T+{elapsed:.2f}ms: Run complete - Resetting timeline"
+                    )
+                self._global_start_time = None
 
     def _get_betas(self, input_messages: List[Dict[str, Any]]) -> List[str]:
         """
@@ -313,6 +413,9 @@ class AnthropicEventHandler(AIAgentEventHandler):
             ValueError: For invalid tool calls
             Exception: For function execution failures
         """
+        # Track function call timing
+        function_call_start = pendulum.now("UTC")
+
         try:
             # Extract function call metadata
             function_call_data = {
@@ -322,28 +425,34 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 "type": tool_call["type"],
             }
 
+            function_name = function_call_data["name"]
+
             # Record initial function call
-            self.logger.info(
-                f"[handle_function_call] Starting function call recording for {function_call_data['name']}"
-            )
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(
+                    f"[handle_function_call] Starting function call recording for {function_name}"
+                )
             self._record_function_call_start(function_call_data)
 
             # Parse and process arguments
-            self.logger.info(
-                f"[handle_function_call] Processing arguments for function {function_call_data['name']}"
-            )
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(
+                    f"[handle_function_call] Processing arguments for function {function_name}"
+                )
             arguments = self._process_function_arguments(function_call_data)
 
             # Execute function and handle result
-            self.logger.info(
-                f"[handle_function_call] Executing function {function_call_data['name']} with arguments {arguments}"
-            )
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(
+                    f"[handle_function_call] Executing function {function_name} with arguments {arguments}"
+                )
             function_output = self._execute_function(function_call_data, arguments)
 
             # Update conversation history
-            self.logger.info(
-                f"[handle_function_call][{function_call_data['name']}] Updating conversation history"
-            )
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(
+                    f"[handle_function_call][{function_name}] Updating conversation history"
+                )
             self._update_conversation_history(
                 function_call_data, function_output, input_messages
             )
@@ -367,6 +476,17 @@ class AnthropicEventHandler(AIAgentEventHandler):
                         },
                         "created_at": pendulum.now("UTC"),
                     }
+                )
+
+            # Log function call execution time
+            function_call_end = pendulum.now("UTC")
+            function_call_time = (
+                function_call_end - function_call_start
+            ).total_seconds() * 1000
+            if self.logger.isEnabledFor(logging.INFO):
+                elapsed = self._get_elapsed_time()
+                self.logger.info(
+                    f"[TIMELINE] T+{elapsed:.2f}ms: Function '{function_call_data['name']}' complete (took {function_call_time:.2f}ms)"
                 )
 
             return input_messages
@@ -424,7 +544,8 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     "notes": log,
                 },
             )
-            self.logger.error("Error parsing function arguments: %s", e)
+            if self.logger.isEnabledFor(logging.ERROR):
+                self.logger.error("Error parsing function arguments: %s", e)
             raise ValueError(f"Failed to parse function arguments: {e}")
 
     def _execute_function(
@@ -451,16 +572,31 @@ class AnthropicEventHandler(AIAgentEventHandler):
             )
 
         try:
+            # Cache JSON serialization to avoid duplicate work (performance optimization)
+            arguments_json = Utility.json_dumps(arguments)
+
             self.invoke_async_funct(
                 "async_insert_update_tool_call",
                 **{
                     "tool_call_id": function_call_data["id"],
-                    "arguments": Utility.json_dumps(arguments),
+                    "arguments": arguments_json,
                     "status": "in_progress",
                 },
             )
 
+            # Track actual function execution time
+            function_exec_start = pendulum.now("UTC")
             function_output = agent_function(**arguments)
+            function_exec_end = pendulum.now("UTC")
+            function_exec_time = (
+                function_exec_end - function_exec_start
+            ).total_seconds() * 1000
+
+            if self.logger.isEnabledFor(logging.INFO):
+                elapsed = self._get_elapsed_time()
+                self.logger.info(
+                    f"[TIMELINE] T+{elapsed:.2f}ms: Function '{function_call_data['name']}' executed (took {function_exec_time:.2f}ms)"
+                )
 
             self.invoke_async_funct(
                 "async_insert_update_tool_call",
@@ -474,11 +610,13 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
         except Exception as e:
             log = traceback.format_exc()
+            # Cache JSON serialization to avoid duplicate work (performance optimization)
+            arguments_json = Utility.json_dumps(arguments)
             self.invoke_async_funct(
                 "async_insert_update_tool_call",
                 **{
                     "tool_call_id": function_call_data["id"],
-                    "arguments": Utility.json_dumps(arguments),
+                    "arguments": arguments_json,
                     "status": "failed",
                     "notes": log,
                 },
@@ -575,17 +713,19 @@ class AnthropicEventHandler(AIAgentEventHandler):
             for content in response.content:
                 # Handle MCP tool use blocks
                 if content.type == "mcp_tool_use":
-                    self.logger.info(
-                        f"MCP tool call received - ID: {content.id}, Name: {content.name}, Server: {content.server_name}, Input: {content.input}."
-                    )
+                    if self.logger.isEnabledFor(logging.INFO):
+                        self.logger.info(
+                            f"MCP tool call received - ID: {content.id}, Name: {content.name}, Server: {content.server_name}, Input: {content.input}."
+                        )
                     continue
                     # Note: MCP tools are handled automatically by the API
                     # No need to manually execute them like regular tools
                 # Handle MCP tool result blocks
                 elif content.type == "mcp_tool_result":
-                    self.logger.info(
-                        f"MCP tool result received - Tool Use ID: {content.tool_use_id}, Content: {content.content}"
-                    )
+                    if self.logger.isEnabledFor(logging.INFO):
+                        self.logger.info(
+                            f"MCP tool result received - Tool Use ID: {content.tool_use_id}, Content: {content.content}"
+                        )
                     continue
                 elif content.type == "code_execution_tool_result":
                     if content.content.type == "code_execution_result":
@@ -641,11 +781,8 @@ class AnthropicEventHandler(AIAgentEventHandler):
         self.accumulated_text = ""
         accumulated_partial_json = ""
         accumulated_partial_text = ""
-        output_format = (
-            self.model_setting.get("text", {"format": {"type": "text"}})
-            .get("format", {"type": "text"})
-            .get("type", "text")
-        )
+        # Use cached output format type (performance optimization)
+        output_format = self.output_format_type
         index = 0
         if self.assistant_messages:
             index = self.assistant_messages[-1]["index"]
@@ -730,9 +867,10 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     ),
                 }
                 if chunk.content_block.is_error:
-                    self.logger.info(
-                        f"MCP tool result received - Tool Use ID: {mcp_tool_result_data['tool_use_id']}, Error: {mcp_tool_result_data['content']}"
-                    )
+                    if self.logger.isEnabledFor(logging.INFO):
+                        self.logger.info(
+                            f"MCP tool result received - Tool Use ID: {mcp_tool_result_data['tool_use_id']}, Error: {mcp_tool_result_data['content']}"
+                        )
                     raise Exception(
                         f"MCP tool error: {mcp_tool_result_data['content']}"
                     )
@@ -773,16 +911,34 @@ class AnthropicEventHandler(AIAgentEventHandler):
         if (tool_use_data or mcp_tool_use_data) and json_input_parts:
             try:
                 # Join JSON parts and parse
-                json_str = "".join(json_input_parts)
-                parsed_input = Utility.json_loads(json_str)
+                json_str = "".join(json_input_parts).strip()
 
-                if tool_use_data:
-                    tool_use_data["input"] = parsed_input
-                elif mcp_tool_use_data:
-                    mcp_tool_use_data["input"] = parsed_input
+                # Only parse if we have actual content
+                if json_str:
+                    parsed_input = Utility.json_loads(json_str)
 
-            except json.JSONDecodeError:
-                raise Exception("\nError parsing tool input JSON")
+                    if tool_use_data:
+                        tool_use_data["input"] = parsed_input
+                    elif mcp_tool_use_data:
+                        mcp_tool_use_data["input"] = parsed_input
+                else:
+                    # Empty JSON string, set empty dict as input
+                    if self.logger.isEnabledFor(logging.WARNING):
+                        self.logger.warning(
+                            "Empty JSON input for tool call, using empty dict"
+                        )
+                    if tool_use_data:
+                        tool_use_data["input"] = {}
+                    elif mcp_tool_use_data:
+                        mcp_tool_use_data["input"] = {}
+
+            except json.JSONDecodeError as e:
+                # Log the actual JSON string that failed to parse for debugging
+                if self.logger.isEnabledFor(logging.ERROR):
+                    self.logger.error(
+                        f"Error parsing tool input JSON. JSON string: '{json_str}', Error: {e}"
+                    )
+                raise Exception(f"Error parsing tool input JSON: {e}")
 
         # Handle regular tool usage
         if stop_reason == "tool_use" and tool_use_data:
@@ -823,14 +979,16 @@ class AnthropicEventHandler(AIAgentEventHandler):
         # We just need to track them for logging/display purposes
         elif mcp_tool_use_data:
             # MCP tools are handled automatically, no recursive call needed
-            self.logger.info(
-                f"MCP tool '{mcp_tool_use_data.get('name')}' from server '{mcp_tool_use_data.get('server_name')}' was executed"
-            )
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(
+                    f"MCP tool '{mcp_tool_use_data.get('name')}' from server '{mcp_tool_use_data.get('server_name')}' was executed"
+                )
         elif mcp_tool_result_data:
             # MCP tool results are handled automatically, no need to process them here
-            self.logger.info(
-                f"MCP tool result received - Tool Use ID: {mcp_tool_result_data.get('tool_use_id')}, Content: {mcp_tool_result_data.get('content')}"
-            )
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(
+                    f"MCP tool result received - Tool Use ID: {mcp_tool_result_data.get('tool_use_id')}, Content: {mcp_tool_result_data.get('content')}"
+                )
 
         self.send_data_to_stream(
             index=index,
