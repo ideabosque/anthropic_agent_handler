@@ -25,6 +25,68 @@ from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility import Utility, convert_decimal_to_number
 
 
+# ----------------------------
+# HTTP/2 Client Configuration
+# ----------------------------
+class HTTP2Client:
+    """
+    Singleton HTTP/2 client for enhanced performance.
+    Provides connection pooling, multiplexing, and header compression via HTTP/2.
+    """
+
+    _instance = None
+    _client = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(HTTP2Client, cls).__new__(cls)
+            cls._instance._initialize_client()
+        return cls._instance
+
+    def _initialize_client(self):
+        """Initialize HTTP/2 client with optimized settings."""
+        self._client = httpx.Client(
+            http2=True,  # Enable HTTP/2
+            limits=httpx.Limits(
+                max_connections=100,  # Maximum concurrent connections
+                max_keepalive_connections=20,  # Keep connections alive for reuse
+                keepalive_expiry=30.0,  # Keep connections alive for 30 seconds
+            ),
+            timeout=httpx.Timeout(
+                connect=10.0,  # Connection timeout
+                read=60.0,  # Read timeout
+                write=60.0,  # Write timeout
+                pool=5.0,  # Pool timeout
+            ),
+        )
+
+    def get(self, url: str, **kwargs) -> Response:
+        """
+        Perform HTTP GET request using HTTP/2 client.
+
+        Args:
+            url: URL to fetch
+            **kwargs: Additional arguments to pass to httpx.get()
+
+        Returns:
+            Response object from httpx
+        """
+        return self._client.get(url, **kwargs)
+
+    def close(self):
+        """Close the HTTP/2 client and free resources."""
+        if self._client:
+            self._client.close()
+
+    def __del__(self):
+        """Cleanup on deletion."""
+        self.close()
+
+
+# Initialize global HTTP/2 client instance
+http2_client = HTTP2Client()
+
+
 class AnthropicBetaVersion(str, Enum):
     """Enum for Anthropic API beta versions"""
 
@@ -1032,7 +1094,8 @@ class AnthropicEventHandler(AIAgentEventHandler):
             # Assign a filename to the BytesIO object
             content_io.name = kwargs["filename"]
         elif "file_uri" in kwargs:
-            content_io = BytesIO(httpx.get(kwargs["file_uri"]).content)
+            # Use HTTP/2 client for enhanced performance
+            content_io = BytesIO(http2_client.get(kwargs["file_uri"]).content)
             content_io.name = kwargs["filename"]
         else:
             raise Exception("No file content provided")

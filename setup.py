@@ -19,6 +19,7 @@ setup(
         "SilvaEngine-Utility",
         "AI-Agent-Handler",
         "anthropic",
+        "httpx[http2]",  # HTTP/2 support for enhanced performance
     ],
     classifiers=[
         "Programming Language :: Python",
