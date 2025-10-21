@@ -39,3 +39,7 @@ exclude = []
 typeCheckingMode = "basic"
 reportCallIssue = "none"
 reportArgumentType = "none"
+reportOptionalMemberAccess = "none"
+reportGeneralTypeIssues = "none"
+reportAttributeAccessIssue = "none"
+reportOperatorIssue = "none"

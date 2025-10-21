@@ -148,7 +148,9 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 k: (
                     int(v)
                     if k == "max_tokens"
-                    else float(v) if isinstance(v, Decimal) else v
+                    else float(v)
+                    if isinstance(v, Decimal)
+                    else v
                 )
                 for k, v in self.agent["configuration"].items()
                 if k not in ["api_key", "text"]
@@ -187,7 +189,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
         """
         self._global_start_time = None
         if self.logger.isEnabledFor(logging.DEBUG):
-            self.logger.debug(f"[TIMELINE] Timeline reset for new run")
+            self.logger.debug("[TIMELINE] Timeline reset for new run")
 
     def invoke_model(self, **kwargs: Dict[str, Any]) -> Any:
         """
@@ -206,9 +208,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
         try:
             invoke_start = pendulum.now("UTC")
 
-            messages = list(
-                filter(lambda x: bool(x["content"]) == True, kwargs["input"])
-            )
+            messages = list(filter(lambda x: bool(x["content"]), kwargs["input"]))
             # Convert any Decimal values to numbers for JSON serialization
             messages = convert_decimal_to_number(messages)
 
@@ -251,7 +251,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
         input_messages: List[Dict[str, Any]],
         queue: Queue = None,
         stream_event: threading.Event = None,
-        input_files: List[str, Any] = [],
+        input_files: List[str] = [],
         model_setting: Dict[str, Any] = None,
     ) -> Optional[str]:
         """
@@ -287,7 +287,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             self._global_start_time = ask_model_start
             if self.logger.isEnabledFor(logging.DEBUG):
                 self.logger.debug(
-                    f"[TIMELINE] T+0ms: Run started - First ask_model call"
+                    "[TIMELINE] T+0ms: Run started - First ask_model call"
                 )
         else:
             if self.logger.isEnabledFor(logging.DEBUG):
@@ -459,7 +459,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
     def handle_function_call(
         self, tool_call: Any, input_messages: List[Dict[str, Any]]
-    ) -> None:
+    ) -> List[Dict[str, Any]]:
         """
         Comprehensive handler for processing and executing function calls from model responses.
         Manages the entire lifecycle of a function call including setup, execution, and result handling.
@@ -1114,7 +1114,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
         }
         if (
             "encoded_content" in kwargs
-            and kwargs["encoded_content"] == True
+            and kwargs["encoded_content"]
             and file.downloadable
         ):
             response: Response = self.client.beta.files.download(kwargs["file_id"])
