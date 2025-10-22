@@ -170,6 +170,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
         # Initialize timeline tracking
         self._global_start_time = None
         self._ask_model_depth = 0
+        self.enable_timeline_log = setting.get("enable_timeline_log", False)
 
     def _get_elapsed_time(self) -> float:
         """
@@ -188,8 +189,8 @@ class AnthropicEventHandler(AIAgentEventHandler):
         Should be called at the start of each new user interaction/run.
         """
         self._global_start_time = None
-        if self.logger.isEnabledFor(logging.DEBUG):
-            self.logger.debug("[TIMELINE] Timeline reset for new run")
+        if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
+            self.logger.info("[TIMELINE] Timeline reset for new run")
 
     def invoke_model(self, **kwargs: Dict[str, Any]) -> Any:
         """
@@ -232,11 +233,11 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     )
                 )
 
-            if self.logger.isEnabledFor(logging.DEBUG):
+            if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 invoke_end = pendulum.now("UTC")
                 invoke_time = (invoke_end - invoke_start).total_seconds() * 1000
                 elapsed = self._get_elapsed_time()
-                self.logger.debug(
+                self.logger.info(
                     f"[TIMELINE] T+{elapsed:.2f}ms: API call returned (took {invoke_time:.2f}ms)"
                 )
 
@@ -285,14 +286,12 @@ class AnthropicEventHandler(AIAgentEventHandler):
         # Recursive calls will use the same start time for the entire run timeline
         if is_top_level:
             self._global_start_time = ask_model_start
-            if self.logger.isEnabledFor(logging.DEBUG):
-                self.logger.debug(
-                    "[TIMELINE] T+0ms: Run started - First ask_model call"
-                )
+            if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
+                self.logger.info("[TIMELINE] T+0ms: Run started - First ask_model call")
         else:
-            if self.logger.isEnabledFor(logging.DEBUG):
+            if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 elapsed = self._get_elapsed_time()
-                self.logger.debug(
+                self.logger.info(
                     f"[TIMELINE] T+{elapsed:.2f}ms: Recursive ask_model call started"
                 )
 
@@ -319,14 +318,14 @@ class AnthropicEventHandler(AIAgentEventHandler):
             if input_files:
                 input_messages = self._process_input_files(input_files, input_messages)
 
-            if self.logger.isEnabledFor(logging.DEBUG):
+            if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 # Track total preparation time before API call
                 preparation_end = pendulum.now("UTC")
                 preparation_time = (
                     preparation_end - ask_model_start
                 ).total_seconds() * 1000
                 elapsed = self._get_elapsed_time()
-                self.logger.debug(
+                self.logger.info(
                     f"[TIMELINE] T+{elapsed:.2f}ms: Preparation complete (took {preparation_time:.2f}ms, cleanup: {cleanup_time:.2f}ms)"
                 )
 
@@ -359,9 +358,9 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
             # Reset timeline when returning to depth 0 (top-level call complete)
             if self._ask_model_depth == 0:
-                if self.logger.isEnabledFor(logging.DEBUG):
+                if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                     elapsed = self._get_elapsed_time()
-                    self.logger.debug(
+                    self.logger.info(
                         f"[TIMELINE] T+{elapsed:.2f}ms: Run complete - Resetting timeline"
                     )
                 self._global_start_time = None
@@ -540,14 +539,14 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     }
                 )
 
-            if self.logger.isEnabledFor(logging.DEBUG):
+            if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 # Log function call execution time
                 function_call_end = pendulum.now("UTC")
                 function_call_time = (
                     function_call_end - function_call_start
                 ).total_seconds() * 1000
                 elapsed = self._get_elapsed_time()
-                self.logger.debug(
+                self.logger.info(
                     f"[TIMELINE] T+{elapsed:.2f}ms: Function '{function_call_data['name']}' complete (took {function_call_time:.2f}ms)"
                 )
 
@@ -650,13 +649,13 @@ class AnthropicEventHandler(AIAgentEventHandler):
             function_exec_start = pendulum.now("UTC")
             function_output = agent_function(**arguments)
 
-            if self.logger.isEnabledFor(logging.DEBUG):
+            if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                 function_exec_end = pendulum.now("UTC")
                 function_exec_time = (
                     function_exec_end - function_exec_start
                 ).total_seconds() * 1000
                 elapsed = self._get_elapsed_time()
-                self.logger.debug(
+                self.logger.info(
                     f"[TIMELINE] T+{elapsed:.2f}ms: Function '{function_call_data['name']}' executed (took {function_exec_time:.2f}ms)"
                 )
 
