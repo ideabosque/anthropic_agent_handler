@@ -158,7 +158,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
             else:
                 self.model_setting[k] = v
 
-
         # Cache frequently accessed configuration values (performance optimization)
         self.output_format_type = (
             self.model_setting.get("text", {"format": {"type": "text"}})
