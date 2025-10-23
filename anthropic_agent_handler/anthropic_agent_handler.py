@@ -143,20 +143,20 @@ class AnthropicEventHandler(AIAgentEventHandler):
             )
 
         # Convert Decimal to appropriate types and build model settings (performance optimization)
-        self.model_setting = {"system": [{"type": "text", "text": self.agent["instructions"]}]}
-
-        for k, v in self.agent["configuration"].items():
-            if k in ["api_key", "text"]:
-                continue
-
-            if k == "max_tokens":
-                self.model_setting[k] = int(v)
-            elif k == "temperature":
-                self.model_setting[k] = float(v)
-            elif isinstance(v, Decimal):
-                self.model_setting[k] = float(v)
-            else:
-                self.model_setting[k] = v
+        self.model_setting = dict(
+            {
+                k: (
+                    int(v)
+                    if k == "max_tokens"
+                    else float(v)
+                    if isinstance(v, Decimal)
+                    else v
+                )
+                for k, v in self.agent["configuration"].items()
+                if k not in ["api_key", "text"]
+            },
+            **{"system": [{"type": "text", "text": self.agent["instructions"]}]},
+        )
 
         # Cache frequently accessed configuration values (performance optimization)
         self.output_format_type = (
@@ -217,7 +217,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             if betas:
                 result = self.client.beta.messages.create(
                     **dict(
-                        self.model_setting,
+                        convert_decimal_to_number(self.model_setting),
                         **{
                             "messages": messages,
                             "stream": kwargs["stream"],
@@ -228,7 +228,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             else:
                 result = self.client.messages.create(
                     **dict(
-                        self.model_setting,
+                        convert_decimal_to_number(self.model_setting),
                         **{"messages": messages, "stream": kwargs["stream"]},
                     )
                 )
