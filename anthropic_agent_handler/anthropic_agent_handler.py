@@ -143,7 +143,9 @@ class AnthropicEventHandler(AIAgentEventHandler):
             )
 
         # Convert Decimal to appropriate types and build model settings (performance optimization)
-        self.model_setting = {"system": [{"type": "text", "text": self.agent["instructions"]}]}
+        self.model_setting = {
+            "system": [{"type": "text", "text": self.agent["instructions"]}]
+        }
 
         for k, v in self.agent["configuration"].items():
             if k not in ["api_key", "text"]:
@@ -154,7 +156,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 elif isinstance(v, Decimal):
                     self.model_setting[k] = float(v)
                 else:
-                    self.model_setting[k] = v
+                    self.model_setting[k] = convert_decimal_to_number(v)
 
         # Cache frequently accessed configuration values (performance optimization)
         self.output_format_type = (
