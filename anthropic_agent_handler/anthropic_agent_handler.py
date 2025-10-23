@@ -228,7 +228,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             else:
                 result = self.client.messages.create(
                     **dict(
-                        self.model_setting,
+                        convert_decimal_to_number(self.model_setting),
                         **{"messages": messages, "stream": kwargs["stream"]},
                     )
                 )
