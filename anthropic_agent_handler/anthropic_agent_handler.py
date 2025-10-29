@@ -93,6 +93,7 @@ class AnthropicBetaVersion(str, Enum):
     MCP_CLIENT = "mcp-client-2025-04-04"
     CODE_EXECUTION = "code-execution-2025-08-25"
     FILES_API = "files-api-2025-04-14"
+    WEB_FETCH = "web-fetch-2025-09-10"
 
 
 # ----------------------------
@@ -384,6 +385,11 @@ class AnthropicEventHandler(AIAgentEventHandler):
             for tool in self.model_setting.get("tools", [])
         ):
             betas.append(AnthropicBetaVersion.CODE_EXECUTION.value)
+
+        if any(
+            tool["name"] == "web_fetch" for tool in self.model_setting.get("tools", [])
+        ):
+            betas.append(AnthropicBetaVersion.WEB_FETCH.value)
 
         for message in input_messages:
             if isinstance(message.get("content"), list):
@@ -797,6 +803,10 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     continue
                 elif content.type == "server_tool_use":
                     continue
+                elif content.type == "web_search_tool_result":
+                    continue
+                elif content.type == "web_fetch_tool_result":
+                    continue
                 elif not hasattr(content, "text"):
                     self.logger.error(
                         f"Unexpected content type in response: {content.type}"
@@ -944,6 +954,22 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     # Look for files in the execution result
                     for file in chunk.content_block.content.contnet:
                         output_files.append({"file_id": file["file_id"]})
+
+            elif (
+                chunk.type == "content_block_start"
+                and hasattr(chunk.content_block, "type")
+                and chunk.content_block.type == "web_search_tool_result"
+            ):
+                # Handle web search results in streaming
+                continue
+
+            elif (
+                chunk.type == "content_block_start"
+                and hasattr(chunk.content_block, "type")
+                and chunk.content_block.type == "web_fetch_tool_result"
+            ):
+                # Handle web fetch results in streaming
+                continue
 
             # Handle tool input JSON parts (for both regular and MCP tools)
             elif (
