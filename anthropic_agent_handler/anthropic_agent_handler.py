@@ -802,7 +802,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 elif content.type == "BetaServerToolUseBlock":
                     continue
                 elif content.type == "server_tool_use":
-                    # Log server tool use (web_search queries)
+                    # Log server tool use (web_search and web_fetch)
                     if self.logger.isEnabledFor(logging.INFO):
                         tool_name = content.name if hasattr(content, "name") else "N/A"
                         tool_input = content.input if hasattr(content, "input") else {}
@@ -811,97 +811,242 @@ class AnthropicEventHandler(AIAgentEventHandler):
                             self.logger.info(
                                 f"Web search initiated - ID: {content.id}, Query: '{query}'"
                             )
+                        elif tool_name == "web_fetch":
+                            url = tool_input.get("url", "N/A")
+                            self.logger.info(
+                                f"Web fetch initiated - ID: {content.id}, URL: '{url}'"
+                            )
                         else:
                             self.logger.info(
                                 f"Server tool use - Name: {tool_name}, ID: {content.id}, Input: {tool_input}"
                             )
                     continue
                 elif content.type == "web_search_tool_result":
-                    if self.logger.isEnabledFor(logging.INFO):
-                        tool_use_id = (
-                            content.tool_use_id
-                            if hasattr(content, "tool_use_id")
-                            else "N/A"
-                        )
+                    tool_use_id = (
+                        content.tool_use_id
+                        if hasattr(content, "tool_use_id")
+                        else "N/A"
+                    )
 
-                        # Count results from content array
-                        result_count = 0
-                        if hasattr(content, "content") and content.content:
-                            result_count = len(content.content)
+                    # Check for errors first (error is in content object, not array)
+                    search_content = (
+                        content.content if hasattr(content, "content") else None
+                    )
 
-                        self.logger.info(
-                            f"Web search results received - Tool Use ID: {tool_use_id}, "
-                            f"Results: {result_count}"
-                        )
+                    if search_content:
+                        # Check if content is an error object (dict or object)
+                        is_error = False
+                        if isinstance(search_content, dict):
+                            content_type = search_content.get("type", "")
+                            if content_type == "web_search_tool_result_error":
+                                is_error = True
+                                if self.logger.isEnabledFor(logging.ERROR):
+                                    error_code = search_content.get(
+                                        "error_code", "Unknown error"
+                                    )
+                                    self.logger.error(
+                                        f"Web search error - Tool Use ID: {tool_use_id}, Error code: {error_code}"
+                                    )
+                        elif (
+                            hasattr(search_content, "type")
+                            and search_content.type == "web_search_tool_result_error"
+                        ):
+                            is_error = True
+                            if self.logger.isEnabledFor(logging.ERROR):
+                                error_code = (
+                                    search_content.error_code
+                                    if hasattr(search_content, "error_code")
+                                    else "Unknown error"
+                                )
+                                self.logger.error(
+                                    f"Web search error - Tool Use ID: {tool_use_id}, Error code: {error_code}"
+                                )
 
-                        # Log details of each result from content array
-                        if hasattr(content, "content") and content.content:
-                            for idx, result in enumerate(content.content[:5], 1):  # Log first 5 results
-                                # Handle both dict and object formats
-                                result_type = result.get("type") if isinstance(result, dict) else (result.type if hasattr(result, "type") else None)
+                        if is_error:
+                            continue
 
-                                if result_type == "web_search_result":
-                                    if isinstance(result, dict):
-                                        result_detail = {
-                                            "url": result.get("url", "N/A"),
-                                            "title": result.get("title", "N/A"),
-                                            "page_age": result.get("page_age", "N/A"),
-                                        }
-                                    else:
-                                        result_detail = {
-                                            "url": result.url if hasattr(result, "url") else "N/A",
-                                            "title": result.title if hasattr(result, "title") else "N/A",
-                                            "page_age": result.page_age if hasattr(result, "page_age") else "N/A",
-                                        }
-                                    self.logger.info(
-                                        f"  Result {idx}: Title: {result_detail['title']}, "
-                                        f"URL: {result_detail['url']}, Page Age: {result_detail['page_age']}"
+                        # If not error, content should be an array of results
+                        if self.logger.isEnabledFor(logging.INFO):
+                            if isinstance(search_content, list):
+                                result_count = len(search_content)
+
+                                self.logger.info(
+                                    f"Web search results received - Tool Use ID: {tool_use_id}, "
+                                    f"Results: {result_count}"
+                                )
+
+                                # Log details of each result from content array
+                                for idx, result in enumerate(
+                                    search_content[:5], 1
+                                ):  # Log first 5 results
+                                    # Handle both dict and object formats
+                                    result_type = (
+                                        result.get("type")
+                                        if isinstance(result, dict)
+                                        else (
+                                            result.type
+                                            if hasattr(result, "type")
+                                            else None
+                                        )
                                     )
 
-                        # Check for errors
-                        if hasattr(content, "error_code"):
-                            self.logger.error(
-                                f"Web search error - Error code: {content.error_code}, Tool Use ID: {tool_use_id}"
-                            )
+                                    if result_type == "web_search_result":
+                                        if isinstance(result, dict):
+                                            result_detail = {
+                                                "url": result.get("url", "N/A"),
+                                                "title": result.get("title", "N/A"),
+                                                "page_age": result.get(
+                                                    "page_age", "N/A"
+                                                ),
+                                            }
+                                        else:
+                                            result_detail = {
+                                                "url": (
+                                                    result.url
+                                                    if hasattr(result, "url")
+                                                    else "N/A"
+                                                ),
+                                                "title": (
+                                                    result.title
+                                                    if hasattr(result, "title")
+                                                    else "N/A"
+                                                ),
+                                                "page_age": (
+                                                    result.page_age
+                                                    if hasattr(result, "page_age")
+                                                    else "N/A"
+                                                ),
+                                            }
+                                        self.logger.info(
+                                            f"  Result {idx}: Title: {result_detail['title']}, "
+                                            f"URL: {result_detail['url']}, Page Age: {result_detail['page_age']}"
+                                        )
                     continue
                 elif content.type == "web_fetch_tool_result":
-                    if self.logger.isEnabledFor(logging.INFO):
-                        fetch_info = {
-                            "url": content.url if hasattr(content, "url") else "N/A",
-                            "retrieved_at": (
-                                content.retrieved_at
-                                if hasattr(content, "retrieved_at")
-                                else "N/A"
-                            ),
-                            "tool_use_id": (
-                                content.tool_use_id
-                                if hasattr(content, "tool_use_id")
-                                else "N/A"
-                            ),
-                        }
+                    tool_use_id = (
+                        content.tool_use_id
+                        if hasattr(content, "tool_use_id")
+                        else "N/A"
+                    )
 
-                        # Extract content preview from nested structure
-                        content_preview = "N/A"
-                        if hasattr(content, "content") and content.content:
-                            if hasattr(content.content, "source"):
-                                source = content.content.source
-                                if hasattr(source, "data") and source.data:
-                                    content_preview = str(source.data)[:200]
-                                    if hasattr(source, "media_type"):
-                                        fetch_info["media_type"] = source.media_type
+                    # Extract from nested structure: content.content (web_fetch_result)
+                    fetch_result = (
+                        content.content if hasattr(content, "content") else None
+                    )
 
-                        self.logger.info(
-                            f"Web fetch result received - URL: {fetch_info['url']}, "
-                            f"Retrieved at: {fetch_info['retrieved_at']}, "
-                            f"Tool use ID: {fetch_info['tool_use_id']}, "
-                            f"Media type: {fetch_info.get('media_type', 'N/A')}, "
-                            f"Content preview: {content_preview}..."
-                        )
+                    if fetch_result:
+                        # Check for errors first (error_code is inside fetch_result)
+                        is_error = False
+                        if isinstance(fetch_result, dict):
+                            fetch_type = fetch_result.get("type", "")
+                            if fetch_type == "web_fetch_tool_error":
+                                is_error = True
+                                if self.logger.isEnabledFor(logging.ERROR):
+                                    error_code = fetch_result.get(
+                                        "error_code", "Unknown error"
+                                    )
+                                    self.logger.error(
+                                        f"Web fetch error - Tool Use ID: {tool_use_id}, Error code: {error_code}"
+                                    )
+                        else:
+                            if (
+                                hasattr(fetch_result, "type")
+                                and fetch_result.type == "web_fetch_tool_error"
+                            ):
+                                is_error = True
+                                if self.logger.isEnabledFor(logging.ERROR):
+                                    error_code = (
+                                        fetch_result.error_code
+                                        if hasattr(fetch_result, "error_code")
+                                        else "Unknown error"
+                                    )
+                                    self.logger.error(
+                                        f"Web fetch error - Tool Use ID: {tool_use_id}, Error code: {error_code}"
+                                    )
 
-                        # Check for errors
-                        if hasattr(content, "error_code"):
-                            self.logger.error(
-                                f"Web fetch error - Error code: {content.error_code}, URL: {fetch_info['url']}"
+                        if is_error:
+                            continue
+
+                        # Handle both dict and object formats for successful fetch
+                        if self.logger.isEnabledFor(logging.INFO):
+                            if isinstance(fetch_result, dict):
+                                url = fetch_result.get("url", "N/A")
+                                retrieved_at = fetch_result.get("retrieved_at", "N/A")
+                                result_content = fetch_result.get("content", {})
+
+                                # Extract from content.source
+                                if isinstance(result_content, dict):
+                                    source = result_content.get("source", {})
+                                    media_type = (
+                                        source.get("media_type", "N/A")
+                                        if isinstance(source, dict)
+                                        else "N/A"
+                                    )
+                                    data = (
+                                        source.get("data", "N/A")
+                                        if isinstance(source, dict)
+                                        else "N/A"
+                                    )
+                                    title = result_content.get("title", "N/A")
+                                else:
+                                    media_type = "N/A"
+                                    data = "N/A"
+                                    title = "N/A"
+                            else:
+                                url = (
+                                    fetch_result.url
+                                    if hasattr(fetch_result, "url")
+                                    else "N/A"
+                                )
+                                retrieved_at = (
+                                    fetch_result.retrieved_at
+                                    if hasattr(fetch_result, "retrieved_at")
+                                    else "N/A"
+                                )
+
+                                # Extract from content.source
+                                result_content = (
+                                    fetch_result.content
+                                    if hasattr(fetch_result, "content")
+                                    else None
+                                )
+                                if result_content:
+                                    source = (
+                                        result_content.source
+                                        if hasattr(result_content, "source")
+                                        else None
+                                    )
+                                    media_type = (
+                                        source.media_type
+                                        if source and hasattr(source, "media_type")
+                                        else "N/A"
+                                    )
+                                    data = (
+                                        source.data
+                                        if source and hasattr(source, "data")
+                                        else "N/A"
+                                    )
+                                    title = (
+                                        result_content.title
+                                        if hasattr(result_content, "title")
+                                        else "N/A"
+                                    )
+                                else:
+                                    media_type = "N/A"
+                                    data = "N/A"
+                                    title = "N/A"
+
+                            content_preview = (
+                                str(data)[:200] if data != "N/A" else "N/A"
+                            )
+
+                            self.logger.info(
+                                f"Web fetch result received - Tool Use ID: {tool_use_id}, "
+                                f"URL: {url}, "
+                                f"Retrieved at: {retrieved_at}, "
+                                f"Title: {title}, "
+                                f"Media type: {media_type}, "
+                                f"Content preview: {content_preview}..."
                             )
                     continue
                 elif not hasattr(content, "text"):
@@ -917,11 +1062,24 @@ class AnthropicEventHandler(AIAgentEventHandler):
                             f"Text with citations - Citation count: {len(content.citations)}, "
                             f"Text: {content.text[:100]}..."
                         )
-                        for idx, citation in enumerate(content.citations[:3], 1):  # Log first 3 citations
-                            if hasattr(citation, "type") and citation.type == "web_search_result_location":
+                        for idx, citation in enumerate(
+                            content.citations[:3], 1
+                        ):  # Log first 3 citations
+                            if (
+                                hasattr(citation, "type")
+                                and citation.type == "web_search_result_location"
+                            ):
                                 citation_detail = {
-                                    "url": citation.url if hasattr(citation, "url") else "N/A",
-                                    "title": citation.title if hasattr(citation, "title") else "N/A",
+                                    "url": (
+                                        citation.url
+                                        if hasattr(citation, "url")
+                                        else "N/A"
+                                    ),
+                                    "title": (
+                                        citation.title
+                                        if hasattr(citation, "title")
+                                        else "N/A"
+                                    ),
                                     "cited_text": (
                                         citation.cited_text[:100]
                                         if hasattr(citation, "cited_text")
@@ -999,16 +1157,32 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 and chunk.content_block.type == "text"
             ):
                 # Check if this text block has citations
-                if hasattr(chunk.content_block, "citations") and chunk.content_block.citations:
+                if (
+                    hasattr(chunk.content_block, "citations")
+                    and chunk.content_block.citations
+                ):
                     if self.logger.isEnabledFor(logging.INFO):
                         self.logger.info(
                             f"Text block with citations started - Citation count: {len(chunk.content_block.citations)}"
                         )
-                        for idx, citation in enumerate(chunk.content_block.citations[:3], 1):
-                            if hasattr(citation, "type") and citation.type == "web_search_result_location":
+                        for idx, citation in enumerate(
+                            chunk.content_block.citations[:3], 1
+                        ):
+                            if (
+                                hasattr(citation, "type")
+                                and citation.type == "web_search_result_location"
+                            ):
                                 citation_detail = {
-                                    "url": citation.url if hasattr(citation, "url") else "N/A",
-                                    "title": citation.title if hasattr(citation, "title") else "N/A",
+                                    "url": (
+                                        citation.url
+                                        if hasattr(citation, "url")
+                                        else "N/A"
+                                    ),
+                                    "title": (
+                                        citation.title
+                                        if hasattr(citation, "title")
+                                        else "N/A"
+                                    ),
                                     "cited_text": (
                                         citation.cited_text[:100]
                                         if hasattr(citation, "cited_text")
@@ -1029,7 +1203,11 @@ class AnthropicEventHandler(AIAgentEventHandler):
             ):
                 if self.logger.isEnabledFor(logging.INFO):
                     # Log citation as it arrives in streaming
-                    citation = chunk.delta.citation if hasattr(chunk.delta, "citation") else None
+                    citation = (
+                        chunk.delta.citation
+                        if hasattr(chunk.delta, "citation")
+                        else None
+                    )
                     if citation:
                         # Handle both dict and object formats
                         if isinstance(citation, dict):
@@ -1042,9 +1220,15 @@ class AnthropicEventHandler(AIAgentEventHandler):
                                     f"Cited text: {cited_text[:100] if len(cited_text) > 100 else cited_text}..."
                                 )
                         else:
-                            citation_type = citation.type if hasattr(citation, "type") else "N/A"
+                            citation_type = (
+                                citation.type if hasattr(citation, "type") else "N/A"
+                            )
                             if citation_type == "web_search_result_location":
-                                cited_text = citation.cited_text if hasattr(citation, "cited_text") else "N/A"
+                                cited_text = (
+                                    citation.cited_text
+                                    if hasattr(citation, "cited_text")
+                                    else "N/A"
+                                )
                                 self.logger.info(
                                     f"Citation received in stream - URL: {citation.url if hasattr(citation, 'url') else 'N/A'}, "
                                     f"Title: {citation.title if hasattr(citation, 'title') else 'N/A'}, "
@@ -1085,7 +1269,11 @@ class AnthropicEventHandler(AIAgentEventHandler):
             ):
                 server_tool_use_data = {
                     "id": chunk.content_block.id,
-                    "name": chunk.content_block.name if hasattr(chunk.content_block, "name") else "N/A",
+                    "name": (
+                        chunk.content_block.name
+                        if hasattr(chunk.content_block, "name")
+                        else "N/A"
+                    ),
                     "input": {},  # Will be populated from JSON deltas
                 }
                 if self.logger.isEnabledFor(logging.INFO):
@@ -1159,54 +1347,103 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 and chunk.content_block.type == "web_search_tool_result"
             ):
                 # Handle web search results in streaming
-                if self.logger.isEnabledFor(logging.INFO):
-                    tool_use_id = (
-                        chunk.content_block.tool_use_id
-                        if hasattr(chunk.content_block, "tool_use_id")
-                        else "N/A"
-                    )
+                tool_use_id = (
+                    chunk.content_block.tool_use_id
+                    if hasattr(chunk.content_block, "tool_use_id")
+                    else "N/A"
+                )
 
-                    # Count results from content array
-                    result_count = 0
-                    if hasattr(chunk.content_block, "content") and chunk.content_block.content:
-                        result_count = len(chunk.content_block.content)
+                # Check for errors first (error is in content object, not array)
+                search_content = (
+                    chunk.content_block.content
+                    if hasattr(chunk.content_block, "content")
+                    else None
+                )
 
-                    self.logger.info(
-                        f"Web search results received in stream - Tool Use ID: {tool_use_id}, "
-                        f"Results: {result_count}"
-                    )
+                if search_content:
+                    # Check if content is an error object (dict or object)
+                    is_error = False
+                    if isinstance(search_content, dict):
+                        content_type = search_content.get("type", "")
+                        if content_type == "web_search_tool_result_error":
+                            is_error = True
+                            if self.logger.isEnabledFor(logging.ERROR):
+                                error_code = search_content.get(
+                                    "error_code", "Unknown error"
+                                )
+                                self.logger.error(
+                                    f"Web search error in stream - Tool Use ID: {tool_use_id}, Error code: {error_code}"
+                                )
+                    elif (
+                        hasattr(search_content, "type")
+                        and search_content.type == "web_search_tool_result_error"
+                    ):
+                        is_error = True
+                        if self.logger.isEnabledFor(logging.ERROR):
+                            error_code = (
+                                search_content.error_code
+                                if hasattr(search_content, "error_code")
+                                else "Unknown error"
+                            )
+                            self.logger.error(
+                                f"Web search error in stream - Tool Use ID: {tool_use_id}, Error code: {error_code}"
+                            )
 
-                    # Log details of each result from content array
-                    if hasattr(chunk.content_block, "content") and chunk.content_block.content:
-                        for idx, result in enumerate(
-                            chunk.content_block.content[:5], 1
-                        ):  # Log first 5 results
-                            # Handle both dict and object formats
-                            result_type = result.get("type") if isinstance(result, dict) else (result.type if hasattr(result, "type") else None)
+                    if is_error:
+                        continue
 
-                            if result_type == "web_search_result":
-                                if isinstance(result, dict):
-                                    result_detail = {
-                                        "url": result.get("url", "N/A"),
-                                        "title": result.get("title", "N/A"),
-                                        "page_age": result.get("page_age", "N/A"),
-                                    }
-                                else:
-                                    result_detail = {
-                                        "url": result.url if hasattr(result, "url") else "N/A",
-                                        "title": result.title if hasattr(result, "title") else "N/A",
-                                        "page_age": result.page_age if hasattr(result, "page_age") else "N/A",
-                                    }
-                                self.logger.info(
-                                    f"  Result {idx}: Title: {result_detail['title']}, "
-                                    f"URL: {result_detail['url']}, Page Age: {result_detail['page_age']}"
+                    # If not error, content should be an array of results
+                    if self.logger.isEnabledFor(logging.INFO):
+                        if isinstance(search_content, list):
+                            result_count = len(search_content)
+
+                            self.logger.info(
+                                f"Web search results received in stream - Tool Use ID: {tool_use_id}, "
+                                f"Results: {result_count}"
+                            )
+
+                            # Log details of each result from content array
+                            for idx, result in enumerate(
+                                search_content[:5], 1
+                            ):  # Log first 5 results
+                                # Handle both dict and object formats
+                                result_type = (
+                                    result.get("type")
+                                    if isinstance(result, dict)
+                                    else (
+                                        result.type if hasattr(result, "type") else None
+                                    )
                                 )
 
-                    # Check for errors
-                    if hasattr(chunk.content_block, "error_code"):
-                        self.logger.error(
-                            f"Web search error in stream - Error code: {chunk.content_block.error_code}, Tool Use ID: {tool_use_id}"
-                        )
+                                if result_type == "web_search_result":
+                                    if isinstance(result, dict):
+                                        result_detail = {
+                                            "url": result.get("url", "N/A"),
+                                            "title": result.get("title", "N/A"),
+                                            "page_age": result.get("page_age", "N/A"),
+                                        }
+                                    else:
+                                        result_detail = {
+                                            "url": (
+                                                result.url
+                                                if hasattr(result, "url")
+                                                else "N/A"
+                                            ),
+                                            "title": (
+                                                result.title
+                                                if hasattr(result, "title")
+                                                else "N/A"
+                                            ),
+                                            "page_age": (
+                                                result.page_age
+                                                if hasattr(result, "page_age")
+                                                else "N/A"
+                                            ),
+                                        }
+                                    self.logger.info(
+                                        f"  Result {idx}: Title: {result_detail['title']}, "
+                                        f"URL: {result_detail['url']}, Page Age: {result_detail['page_age']}"
+                                    )
                 continue
 
             elif (
@@ -1215,47 +1452,130 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 and chunk.content_block.type == "web_fetch_tool_result"
             ):
                 # Handle web fetch results in streaming
-                if self.logger.isEnabledFor(logging.INFO):
-                    fetch_info = {
-                        "url": (
-                            chunk.content_block.url
-                            if hasattr(chunk.content_block, "url")
-                            else "N/A"
-                        ),
-                        "retrieved_at": (
-                            chunk.content_block.retrieved_at
-                            if hasattr(chunk.content_block, "retrieved_at")
-                            else "N/A"
-                        ),
-                        "tool_use_id": (
-                            chunk.content_block.tool_use_id
-                            if hasattr(chunk.content_block, "tool_use_id")
-                            else "N/A"
-                        ),
-                    }
+                tool_use_id = (
+                    chunk.content_block.tool_use_id
+                    if hasattr(chunk.content_block, "tool_use_id")
+                    else "N/A"
+                )
 
-                    # Extract content preview from nested structure
-                    content_preview = "N/A"
-                    if hasattr(chunk.content_block, "content") and chunk.content_block.content:
-                        if hasattr(chunk.content_block.content, "source"):
-                            source = chunk.content_block.content.source
-                            if hasattr(source, "data") and source.data:
-                                content_preview = str(source.data)[:200]
-                                if hasattr(source, "media_type"):
-                                    fetch_info["media_type"] = source.media_type
+                # Extract from nested structure: chunk.content_block.content (web_fetch_result)
+                fetch_result = (
+                    chunk.content_block.content
+                    if hasattr(chunk.content_block, "content")
+                    else None
+                )
 
-                    self.logger.info(
-                        f"Web fetch result received in stream - URL: {fetch_info['url']}, "
-                        f"Retrieved at: {fetch_info['retrieved_at']}, "
-                        f"Tool use ID: {fetch_info['tool_use_id']}, "
-                        f"Media type: {fetch_info.get('media_type', 'N/A')}, "
-                        f"Content preview: {content_preview}..."
-                    )
+                if fetch_result:
+                    # Check for errors first (error_code is inside fetch_result)
+                    is_error = False
+                    if isinstance(fetch_result, dict):
+                        fetch_type = fetch_result.get("type", "")
+                        if fetch_type == "web_fetch_tool_result_error":
+                            is_error = True
+                            if self.logger.isEnabledFor(logging.ERROR):
+                                error_code = fetch_result.get(
+                                    "error_code", "Unknown error"
+                                )
+                                self.logger.error(
+                                    f"Web fetch error in stream - Tool Use ID: {tool_use_id}, Error code: {error_code}"
+                                )
+                    else:
+                        if (
+                            hasattr(fetch_result, "type")
+                            and fetch_result.type == "web_fetch_tool_error"
+                        ):
+                            is_error = True
+                            if self.logger.isEnabledFor(logging.ERROR):
+                                error_code = (
+                                    fetch_result.error_code
+                                    if hasattr(fetch_result, "error_code")
+                                    else "Unknown error"
+                                )
+                                self.logger.error(
+                                    f"Web fetch error in stream - Tool Use ID: {tool_use_id}, Error code: {error_code}"
+                                )
 
-                    # Check for errors
-                    if hasattr(chunk.content_block, "error_code"):
-                        self.logger.error(
-                            f"Web fetch error in stream - Error code: {chunk.content_block.error_code}, URL: {fetch_info['url']}"
+                    if is_error:
+                        continue
+
+                    # Handle both dict and object formats for successful fetch
+                    if self.logger.isEnabledFor(logging.INFO):
+                        if isinstance(fetch_result, dict):
+                            url = fetch_result.get("url", "N/A")
+                            retrieved_at = fetch_result.get("retrieved_at", "N/A")
+                            result_content = fetch_result.get("content", {})
+
+                            # Extract from content.source
+                            if isinstance(result_content, dict):
+                                source = result_content.get("source", {})
+                                media_type = (
+                                    source.get("media_type", "N/A")
+                                    if isinstance(source, dict)
+                                    else "N/A"
+                                )
+                                data = (
+                                    source.get("data", "N/A")
+                                    if isinstance(source, dict)
+                                    else "N/A"
+                                )
+                                title = result_content.get("title", "N/A")
+                            else:
+                                media_type = "N/A"
+                                data = "N/A"
+                                title = "N/A"
+                        else:
+                            url = (
+                                fetch_result.url
+                                if hasattr(fetch_result, "url")
+                                else "N/A"
+                            )
+                            retrieved_at = (
+                                fetch_result.retrieved_at
+                                if hasattr(fetch_result, "retrieved_at")
+                                else "N/A"
+                            )
+
+                            # Extract from content.source
+                            result_content = (
+                                fetch_result.content
+                                if hasattr(fetch_result, "content")
+                                else None
+                            )
+                            if result_content:
+                                source = (
+                                    result_content.source
+                                    if hasattr(result_content, "source")
+                                    else None
+                                )
+                                media_type = (
+                                    source.media_type
+                                    if source and hasattr(source, "media_type")
+                                    else "N/A"
+                                )
+                                data = (
+                                    source.data
+                                    if source and hasattr(source, "data")
+                                    else "N/A"
+                                )
+                                title = (
+                                    result_content.title
+                                    if hasattr(result_content, "title")
+                                    else "N/A"
+                                )
+                            else:
+                                media_type = "N/A"
+                                data = "N/A"
+                                title = "N/A"
+
+                        content_preview = str(data)[:200] if data != "N/A" else "N/A"
+
+                        self.logger.info(
+                            f"Web fetch result received in stream - Tool Use ID: {tool_use_id}, "
+                            f"URL: {url}, "
+                            f"Retrieved at: {retrieved_at}, "
+                            f"Title: {title}, "
+                            f"Media type: {media_type}, "
+                            f"Content preview: {content_preview}..."
                         )
                 continue
 
@@ -1278,10 +1598,22 @@ class AnthropicEventHandler(AIAgentEventHandler):
                             server_tool_use_data["input"] = parsed_input
 
                             # Log the query for web_search
-                            if server_tool_use_data["name"] == "web_search" and self.logger.isEnabledFor(logging.INFO):
+                            if server_tool_use_data[
+                                "name"
+                            ] == "web_search" and self.logger.isEnabledFor(
+                                logging.INFO
+                            ):
                                 query = parsed_input.get("query", "N/A")
                                 self.logger.info(
                                     f"Web search query in stream - ID: {server_tool_use_data['id']}, Query: '{query}'"
+                                )
+                            # Log the URL for web_fetch
+                            elif server_tool_use_data[
+                                "name"
+                            ] == "web_fetch" and self.logger.isEnabledFor(logging.INFO):
+                                url = parsed_input.get("url", "N/A")
+                                self.logger.info(
+                                    f"Web fetch URL in stream - ID: {server_tool_use_data['id']}, URL: '{url}'"
                                 )
                     except json.JSONDecodeError as e:
                         if self.logger.isEnabledFor(logging.ERROR):
@@ -1306,7 +1638,9 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     index += 1
 
         # Process JSON input if we have tool use (regular, MCP, or server)
-        if (tool_use_data or mcp_tool_use_data or server_tool_use_data) and json_input_parts:
+        if (
+            tool_use_data or mcp_tool_use_data or server_tool_use_data
+        ) and json_input_parts:
             try:
                 # Join JSON parts and parse
                 json_str = "".join(json_input_parts).strip()
@@ -1322,7 +1656,9 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     elif server_tool_use_data:
                         server_tool_use_data["input"] = parsed_input
                         # Log the query for web_search
-                        if server_tool_use_data["name"] == "web_search" and self.logger.isEnabledFor(logging.INFO):
+                        if server_tool_use_data[
+                            "name"
+                        ] == "web_search" and self.logger.isEnabledFor(logging.INFO):
                             query = parsed_input.get("query", "N/A")
                             self.logger.info(
                                 f"Web search query in stream - ID: {server_tool_use_data['id']}, Query: '{query}'"
