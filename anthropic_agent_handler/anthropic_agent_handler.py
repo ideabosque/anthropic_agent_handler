@@ -802,16 +802,138 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 elif content.type == "BetaServerToolUseBlock":
                     continue
                 elif content.type == "server_tool_use":
+                    # Log server tool use (web_search queries)
+                    if self.logger.isEnabledFor(logging.INFO):
+                        tool_name = content.name if hasattr(content, "name") else "N/A"
+                        tool_input = content.input if hasattr(content, "input") else {}
+                        if tool_name == "web_search":
+                            query = tool_input.get("query", "N/A")
+                            self.logger.info(
+                                f"Web search initiated - ID: {content.id}, Query: '{query}'"
+                            )
+                        else:
+                            self.logger.info(
+                                f"Server tool use - Name: {tool_name}, ID: {content.id}, Input: {tool_input}"
+                            )
                     continue
                 elif content.type == "web_search_tool_result":
+                    if self.logger.isEnabledFor(logging.INFO):
+                        tool_use_id = (
+                            content.tool_use_id
+                            if hasattr(content, "tool_use_id")
+                            else "N/A"
+                        )
+
+                        # Count results from content array
+                        result_count = 0
+                        if hasattr(content, "content") and content.content:
+                            result_count = len(content.content)
+
+                        self.logger.info(
+                            f"Web search results received - Tool Use ID: {tool_use_id}, "
+                            f"Results: {result_count}"
+                        )
+
+                        # Log details of each result from content array
+                        if hasattr(content, "content") and content.content:
+                            for idx, result in enumerate(content.content[:5], 1):  # Log first 5 results
+                                # Handle both dict and object formats
+                                result_type = result.get("type") if isinstance(result, dict) else (result.type if hasattr(result, "type") else None)
+
+                                if result_type == "web_search_result":
+                                    if isinstance(result, dict):
+                                        result_detail = {
+                                            "url": result.get("url", "N/A"),
+                                            "title": result.get("title", "N/A"),
+                                            "page_age": result.get("page_age", "N/A"),
+                                        }
+                                    else:
+                                        result_detail = {
+                                            "url": result.url if hasattr(result, "url") else "N/A",
+                                            "title": result.title if hasattr(result, "title") else "N/A",
+                                            "page_age": result.page_age if hasattr(result, "page_age") else "N/A",
+                                        }
+                                    self.logger.info(
+                                        f"  Result {idx}: Title: {result_detail['title']}, "
+                                        f"URL: {result_detail['url']}, Page Age: {result_detail['page_age']}"
+                                    )
+
+                        # Check for errors
+                        if hasattr(content, "error_code"):
+                            self.logger.error(
+                                f"Web search error - Error code: {content.error_code}, Tool Use ID: {tool_use_id}"
+                            )
                     continue
                 elif content.type == "web_fetch_tool_result":
+                    if self.logger.isEnabledFor(logging.INFO):
+                        fetch_info = {
+                            "url": content.url if hasattr(content, "url") else "N/A",
+                            "retrieved_at": (
+                                content.retrieved_at
+                                if hasattr(content, "retrieved_at")
+                                else "N/A"
+                            ),
+                            "tool_use_id": (
+                                content.tool_use_id
+                                if hasattr(content, "tool_use_id")
+                                else "N/A"
+                            ),
+                        }
+
+                        # Extract content preview from nested structure
+                        content_preview = "N/A"
+                        if hasattr(content, "content") and content.content:
+                            if hasattr(content.content, "source"):
+                                source = content.content.source
+                                if hasattr(source, "data") and source.data:
+                                    content_preview = str(source.data)[:200]
+                                    if hasattr(source, "media_type"):
+                                        fetch_info["media_type"] = source.media_type
+
+                        self.logger.info(
+                            f"Web fetch result received - URL: {fetch_info['url']}, "
+                            f"Retrieved at: {fetch_info['retrieved_at']}, "
+                            f"Tool use ID: {fetch_info['tool_use_id']}, "
+                            f"Media type: {fetch_info.get('media_type', 'N/A')}, "
+                            f"Content preview: {content_preview}..."
+                        )
+
+                        # Check for errors
+                        if hasattr(content, "error_code"):
+                            self.logger.error(
+                                f"Web fetch error - Error code: {content.error_code}, URL: {fetch_info['url']}"
+                            )
                     continue
                 elif not hasattr(content, "text"):
                     self.logger.error(
                         f"Unexpected content type in response: {content.type}"
                     )
                     continue
+
+                # Log citations if present in text blocks
+                if hasattr(content, "citations") and content.citations:
+                    if self.logger.isEnabledFor(logging.INFO):
+                        self.logger.info(
+                            f"Text with citations - Citation count: {len(content.citations)}, "
+                            f"Text: {content.text[:100]}..."
+                        )
+                        for idx, citation in enumerate(content.citations[:3], 1):  # Log first 3 citations
+                            if hasattr(citation, "type") and citation.type == "web_search_result_location":
+                                citation_detail = {
+                                    "url": citation.url if hasattr(citation, "url") else "N/A",
+                                    "title": citation.title if hasattr(citation, "title") else "N/A",
+                                    "cited_text": (
+                                        citation.cited_text[:100]
+                                        if hasattr(citation, "cited_text")
+                                        else "N/A"
+                                    ),
+                                }
+                                self.logger.info(
+                                    f"  Citation {idx}: Title: {citation_detail['title']}, "
+                                    f"URL: {citation_detail['url']}, "
+                                    f"Cited text: {citation_detail['cited_text']}..."
+                                )
+
                 final_content += content.text
 
             if assistant_message_content:
@@ -848,6 +970,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
         tool_use_data = None
         mcp_tool_use_data = None
         mcp_tool_result_data = None
+        server_tool_use_data = None
         output_files = []
         self.accumulated_text = ""
         accumulated_partial_json = ""
@@ -868,6 +991,35 @@ class AnthropicEventHandler(AIAgentEventHandler):
             # Handle message start event
             if chunk.type == "message_start":
                 message_id = chunk.message.id
+
+            # Handle content block start for text (to capture citations metadata)
+            elif (
+                chunk.type == "content_block_start"
+                and hasattr(chunk.content_block, "type")
+                and chunk.content_block.type == "text"
+            ):
+                # Check if this text block has citations
+                if hasattr(chunk.content_block, "citations") and chunk.content_block.citations:
+                    if self.logger.isEnabledFor(logging.INFO):
+                        self.logger.info(
+                            f"Text block with citations started - Citation count: {len(chunk.content_block.citations)}"
+                        )
+                        for idx, citation in enumerate(chunk.content_block.citations[:3], 1):
+                            if hasattr(citation, "type") and citation.type == "web_search_result_location":
+                                citation_detail = {
+                                    "url": citation.url if hasattr(citation, "url") else "N/A",
+                                    "title": citation.title if hasattr(citation, "title") else "N/A",
+                                    "cited_text": (
+                                        citation.cited_text[:100]
+                                        if hasattr(citation, "cited_text")
+                                        else "N/A"
+                                    ),
+                                }
+                                self.logger.info(
+                                    f"  Citation {idx}: Title: {citation_detail['title']}, "
+                                    f"URL: {citation_detail['url']}, "
+                                    f"Cited text: {citation_detail['cited_text']}..."
+                                )
 
             # Handle text content
             elif chunk.type == "content_block_delta" and hasattr(chunk.delta, "text"):
@@ -893,6 +1045,22 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     # Check if text contains XML-style tags and update format
                     index, accumulated_partial_text = self.process_text_content(
                         index, accumulated_partial_text, output_format
+                    )
+
+            # Handle server tool use (web_search)
+            elif (
+                chunk.type == "content_block_start"
+                and hasattr(chunk.content_block, "type")
+                and chunk.content_block.type == "server_tool_use"
+            ):
+                server_tool_use_data = {
+                    "id": chunk.content_block.id,
+                    "name": chunk.content_block.name if hasattr(chunk.content_block, "name") else "N/A",
+                    "input": {},  # Will be populated from JSON deltas
+                }
+                if self.logger.isEnabledFor(logging.INFO):
+                    self.logger.info(
+                        f"Server tool use started in stream - Name: {server_tool_use_data['name']}, ID: {server_tool_use_data['id']}"
                     )
 
             # Handle regular tool use start
@@ -961,6 +1129,54 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 and chunk.content_block.type == "web_search_tool_result"
             ):
                 # Handle web search results in streaming
+                if self.logger.isEnabledFor(logging.INFO):
+                    tool_use_id = (
+                        chunk.content_block.tool_use_id
+                        if hasattr(chunk.content_block, "tool_use_id")
+                        else "N/A"
+                    )
+
+                    # Count results from content array
+                    result_count = 0
+                    if hasattr(chunk.content_block, "content") and chunk.content_block.content:
+                        result_count = len(chunk.content_block.content)
+
+                    self.logger.info(
+                        f"Web search results received in stream - Tool Use ID: {tool_use_id}, "
+                        f"Results: {result_count}"
+                    )
+
+                    # Log details of each result from content array
+                    if hasattr(chunk.content_block, "content") and chunk.content_block.content:
+                        for idx, result in enumerate(
+                            chunk.content_block.content[:5], 1
+                        ):  # Log first 5 results
+                            # Handle both dict and object formats
+                            result_type = result.get("type") if isinstance(result, dict) else (result.type if hasattr(result, "type") else None)
+
+                            if result_type == "web_search_result":
+                                if isinstance(result, dict):
+                                    result_detail = {
+                                        "url": result.get("url", "N/A"),
+                                        "title": result.get("title", "N/A"),
+                                        "page_age": result.get("page_age", "N/A"),
+                                    }
+                                else:
+                                    result_detail = {
+                                        "url": result.url if hasattr(result, "url") else "N/A",
+                                        "title": result.title if hasattr(result, "title") else "N/A",
+                                        "page_age": result.page_age if hasattr(result, "page_age") else "N/A",
+                                    }
+                                self.logger.info(
+                                    f"  Result {idx}: Title: {result_detail['title']}, "
+                                    f"URL: {result_detail['url']}, Page Age: {result_detail['page_age']}"
+                                )
+
+                    # Check for errors
+                    if hasattr(chunk.content_block, "error_code"):
+                        self.logger.error(
+                            f"Web search error in stream - Error code: {chunk.content_block.error_code}, Tool Use ID: {tool_use_id}"
+                        )
                 continue
 
             elif (
@@ -969,6 +1185,48 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 and chunk.content_block.type == "web_fetch_tool_result"
             ):
                 # Handle web fetch results in streaming
+                if self.logger.isEnabledFor(logging.INFO):
+                    fetch_info = {
+                        "url": (
+                            chunk.content_block.url
+                            if hasattr(chunk.content_block, "url")
+                            else "N/A"
+                        ),
+                        "retrieved_at": (
+                            chunk.content_block.retrieved_at
+                            if hasattr(chunk.content_block, "retrieved_at")
+                            else "N/A"
+                        ),
+                        "tool_use_id": (
+                            chunk.content_block.tool_use_id
+                            if hasattr(chunk.content_block, "tool_use_id")
+                            else "N/A"
+                        ),
+                    }
+
+                    # Extract content preview from nested structure
+                    content_preview = "N/A"
+                    if hasattr(chunk.content_block, "content") and chunk.content_block.content:
+                        if hasattr(chunk.content_block.content, "source"):
+                            source = chunk.content_block.content.source
+                            if hasattr(source, "data") and source.data:
+                                content_preview = str(source.data)[:200]
+                                if hasattr(source, "media_type"):
+                                    fetch_info["media_type"] = source.media_type
+
+                    self.logger.info(
+                        f"Web fetch result received in stream - URL: {fetch_info['url']}, "
+                        f"Retrieved at: {fetch_info['retrieved_at']}, "
+                        f"Tool use ID: {fetch_info['tool_use_id']}, "
+                        f"Media type: {fetch_info.get('media_type', 'N/A')}, "
+                        f"Content preview: {content_preview}..."
+                    )
+
+                    # Check for errors
+                    if hasattr(chunk.content_block, "error_code"):
+                        self.logger.error(
+                            f"Web fetch error in stream - Error code: {chunk.content_block.error_code}, URL: {fetch_info['url']}"
+                        )
                 continue
 
             # Handle tool input JSON parts (for both regular and MCP tools)
@@ -978,6 +1236,30 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 and chunk.delta.type == "input_json_delta"
             ):
                 json_input_parts.append(chunk.delta.partial_json)
+
+            # Handle content block stop - parse JSON for server tools here
+            elif chunk.type == "content_block_stop":
+                # If we have server tool use data and JSON parts, parse and log immediately
+                if server_tool_use_data and json_input_parts:
+                    try:
+                        json_str = "".join(json_input_parts).strip()
+                        if json_str:
+                            parsed_input = Utility.json_loads(json_str)
+                            server_tool_use_data["input"] = parsed_input
+
+                            # Log the query for web_search
+                            if server_tool_use_data["name"] == "web_search" and self.logger.isEnabledFor(logging.INFO):
+                                query = parsed_input.get("query", "N/A")
+                                self.logger.info(
+                                    f"Web search query in stream - ID: {server_tool_use_data['id']}, Query: '{query}'"
+                                )
+                    except json.JSONDecodeError as e:
+                        if self.logger.isEnabledFor(logging.ERROR):
+                            self.logger.error(f"Error parsing server tool JSON: {e}")
+
+                    # Clear the data and JSON parts for the next tool
+                    server_tool_use_data = None
+                    json_input_parts = []
 
             # Handle message delta for stop reason
             elif chunk.type == "message_delta":
@@ -993,8 +1275,8 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     accumulated_partial_text = ""
                     index += 1
 
-        # Process JSON input if we have tool use (regular or MCP)
-        if (tool_use_data or mcp_tool_use_data) and json_input_parts:
+        # Process JSON input if we have tool use (regular, MCP, or server)
+        if (tool_use_data or mcp_tool_use_data or server_tool_use_data) and json_input_parts:
             try:
                 # Join JSON parts and parse
                 json_str = "".join(json_input_parts).strip()
@@ -1007,6 +1289,14 @@ class AnthropicEventHandler(AIAgentEventHandler):
                         tool_use_data["input"] = parsed_input
                     elif mcp_tool_use_data:
                         mcp_tool_use_data["input"] = parsed_input
+                    elif server_tool_use_data:
+                        server_tool_use_data["input"] = parsed_input
+                        # Log the query for web_search
+                        if server_tool_use_data["name"] == "web_search" and self.logger.isEnabledFor(logging.INFO):
+                            query = parsed_input.get("query", "N/A")
+                            self.logger.info(
+                                f"Web search query in stream - ID: {server_tool_use_data['id']}, Query: '{query}'"
+                            )
                 else:
                     # Empty JSON string, set empty dict as input
                     if self.logger.isEnabledFor(logging.WARNING):
@@ -1017,6 +1307,8 @@ class AnthropicEventHandler(AIAgentEventHandler):
                         tool_use_data["input"] = {}
                     elif mcp_tool_use_data:
                         mcp_tool_use_data["input"] = {}
+                    elif server_tool_use_data:
+                        server_tool_use_data["input"] = {}
 
             except json.JSONDecodeError as e:
                 # Log the actual JSON string that failed to parse for debugging
