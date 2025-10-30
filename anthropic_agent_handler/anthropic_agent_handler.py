@@ -939,7 +939,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                         is_error = False
                         if isinstance(fetch_result, dict):
                             fetch_type = fetch_result.get("type", "")
-                            if fetch_type == "web_fetch_tool_error":
+                            if fetch_type == "web_fetch_tool_result_error":
                                 is_error = True
                                 if self.logger.isEnabledFor(logging.ERROR):
                                     error_code = fetch_result.get(
