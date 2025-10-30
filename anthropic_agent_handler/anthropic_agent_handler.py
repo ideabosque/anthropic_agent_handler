@@ -1021,6 +1021,36 @@ class AnthropicEventHandler(AIAgentEventHandler):
                                     f"Cited text: {citation_detail['cited_text']}..."
                                 )
 
+            # Handle citations delta
+            elif (
+                chunk.type == "content_block_delta"
+                and hasattr(chunk.delta, "type")
+                and chunk.delta.type == "citations_delta"
+            ):
+                if self.logger.isEnabledFor(logging.INFO):
+                    # Log citation as it arrives in streaming
+                    citation = chunk.delta.citation if hasattr(chunk.delta, "citation") else None
+                    if citation:
+                        # Handle both dict and object formats
+                        if isinstance(citation, dict):
+                            citation_type = citation.get("type", "N/A")
+                            cited_text = citation.get("cited_text", "N/A")
+                            if citation_type == "web_search_result_location":
+                                self.logger.info(
+                                    f"Citation received in stream - URL: {citation.get('url', 'N/A')}, "
+                                    f"Title: {citation.get('title', 'N/A')}, "
+                                    f"Cited text: {cited_text[:100] if len(cited_text) > 100 else cited_text}..."
+                                )
+                        else:
+                            citation_type = citation.type if hasattr(citation, "type") else "N/A"
+                            if citation_type == "web_search_result_location":
+                                cited_text = citation.cited_text if hasattr(citation, "cited_text") else "N/A"
+                                self.logger.info(
+                                    f"Citation received in stream - URL: {citation.url if hasattr(citation, 'url') else 'N/A'}, "
+                                    f"Title: {citation.title if hasattr(citation, 'title') else 'N/A'}, "
+                                    f"Cited text: {cited_text[:100] if len(cited_text) > 100 else cited_text}..."
+                                )
+
             # Handle text content
             elif chunk.type == "content_block_delta" and hasattr(chunk.delta, "text"):
                 if not chunk.delta.text:
