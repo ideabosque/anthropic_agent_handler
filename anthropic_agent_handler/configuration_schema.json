@@ -81,9 +81,9 @@
             "type": "string"
         },
         "temperature": {
-            "default": 1,
-            "maximum": 2,
-            "minimum": 0,
+            "default": 0.1,
+            "maximum": 1.0,
+            "minimum": 0.0,
             "type": "number"
         },
         "tools": {
