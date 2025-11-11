@@ -1891,14 +1891,13 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     f"[handle_stream] Stored reasoning summary: {final_reasoning_text[:100]}..."
                 )
 
-        self.final_output = dict(
-            self.final_output,
-            **{
+        self.final_output.update(
+            {
                 "message_id": message_id,
                 "role": "assistant",
                 "content": self.accumulated_text,
                 "output_files": output_files,
-            },
+            }
         )
 
         # Signal that streaming has finished
