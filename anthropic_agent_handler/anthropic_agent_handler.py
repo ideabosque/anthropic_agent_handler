@@ -94,6 +94,7 @@ class AnthropicBetaVersion(str, Enum):
     CODE_EXECUTION = "code-execution-2025-08-25"
     FILES_API = "files-api-2025-04-14"
     WEB_FETCH = "web-fetch-2025-09-10"
+    INTERLEAVED_THINKING = "interleaved-thinking-2025-05-14"
 
 
 # ----------------------------
@@ -166,6 +167,21 @@ class AnthropicEventHandler(AIAgentEventHandler):
             .get("type", "text")
         )
 
+        # Validate reasoning/thinking configuration if present
+        if "thinking" in self.model_setting:
+            if not isinstance(self.model_setting["thinking"], dict):
+                if self.logger and self.logger.isEnabledFor(logging.WARNING):
+                    self.logger.warning(
+                        "Thinking configuration should be a dictionary. "
+                        "Thinking features may not work correctly."
+                    )
+            elif not self.model_setting["thinking"].get("type"):
+                if self.logger and self.logger.isEnabledFor(logging.WARNING):
+                    self.logger.warning(
+                        "Thinking type is not specified in configuration. "
+                        "Extended thinking may not be enabled."
+                    )
+
         self.assistant_messages = []
 
         # Initialize timeline tracking
@@ -215,23 +231,42 @@ class AnthropicEventHandler(AIAgentEventHandler):
             messages = convert_decimal_to_number(messages)
 
             betas = self._get_betas(messages)
+
+            # Prepare API call parameters
+            api_params = {
+                "messages": messages,
+                "stream": kwargs["stream"],
+            }
+
+            # Add thinking configuration if present
+            if "thinking" in self.model_setting and isinstance(
+                self.model_setting["thinking"], dict
+            ):
+                thinking_config = self.model_setting["thinking"]
+                # Only include thinking in API call if type is specified
+                if thinking_config.get("type"):
+                    # Create thinking parameter with type and optional budget
+                    thinking_param = {"type": thinking_config["type"]}
+                    if "budget_tokens" in thinking_config:
+                        thinking_param["budget_tokens"] = thinking_config[
+                            "budget_tokens"
+                        ]
+                    api_params["thinking"] = thinking_param
+
+            # Filter out "thinking" from model_setting to avoid duplication
+            # since we handle it explicitly in api_params
+            filtered_model_setting = {
+                k: v for k, v in self.model_setting.items() if k != "thinking"
+            }
+
             if betas:
+                api_params["betas"] = betas
                 result = self.client.beta.messages.create(
-                    **dict(
-                        self.model_setting,
-                        **{
-                            "messages": messages,
-                            "stream": kwargs["stream"],
-                            "betas": betas,
-                        },
-                    )
+                    **dict(filtered_model_setting, **api_params)
                 )
             else:
                 result = self.client.messages.create(
-                    **dict(
-                        self.model_setting,
-                        **{"messages": messages, "stream": kwargs["stream"]},
-                    )
+                    **dict(filtered_model_setting, **api_params)
                 )
 
             if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
@@ -368,29 +403,44 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
     def _get_betas(self, input_messages: List[Dict[str, Any]]) -> List[str]:
         """
-        Check if input messages contain file content.
+        Determine which beta features are needed based on configuration and input messages.
 
         Args:
             input_messages: List of message dictionaries to check
 
         Returns:
-            bool: True if messages contain file content, False otherwise
+            List of beta version strings required for the API call
         """
         betas = []
+
+        # Check for MCP servers
         if "mcp_servers" in self.model_setting:
             betas.append(AnthropicBetaVersion.MCP_CLIENT.value)
 
+        # Check for code execution tool
         if any(
             tool["name"] == "code_execution"
             for tool in self.model_setting.get("tools", [])
         ):
             betas.append(AnthropicBetaVersion.CODE_EXECUTION.value)
 
+        # Check for web fetch tool
         if any(
             tool["name"] == "web_fetch" for tool in self.model_setting.get("tools", [])
         ):
             betas.append(AnthropicBetaVersion.WEB_FETCH.value)
 
+        # Check for extended thinking/reasoning
+        # Interleaved thinking allows Claude to reason between tool calls
+        if "thinking" in self.model_setting and isinstance(
+            self.model_setting["thinking"], dict
+        ):
+            thinking_config = self.model_setting["thinking"]
+            # Enable interleaved thinking for Claude 4 models or when explicitly configured
+            if thinking_config.get("type") in ["enabled", "interleaved"]:
+                betas.append(AnthropicBetaVersion.INTERLEAVED_THINKING.value)
+
+        # Check for file-related content in messages
         for message in input_messages:
             if isinstance(message.get("content"), list):
                 for content in message["content"]:
@@ -755,11 +805,15 @@ class AnthropicEventHandler(AIAgentEventHandler):
         else:
             url = citation.url if hasattr(citation, "url") else "N/A"
             title = citation.title if hasattr(citation, "title") else "N/A"
-            cited_text = citation.cited_text if hasattr(citation, "cited_text") else "N/A"
+            cited_text = (
+                citation.cited_text if hasattr(citation, "cited_text") else "N/A"
+            )
 
         # Truncate cited text if needed
         cited_text_preview = (
-            cited_text[:100] if isinstance(cited_text, str) and len(cited_text) > 100 else cited_text
+            cited_text[:100]
+            if isinstance(cited_text, str) and len(cited_text) > 100
+            else cited_text
         )
 
         # Log based on mode
@@ -777,7 +831,10 @@ class AnthropicEventHandler(AIAgentEventHandler):
             )
 
     def _handle_citations(
-        self, citations_list: List[Any], text_preview: str = None, is_streaming: bool = False
+        self,
+        citations_list: List[Any],
+        text_preview: str = None,
+        is_streaming: bool = False,
     ) -> None:
         """
         Private helper to handle citations from text blocks.
@@ -827,7 +884,10 @@ class AnthropicEventHandler(AIAgentEventHandler):
             self._log_citation(citation, idx=0, is_streaming=True)
 
     def _handle_server_tool_use(
-        self, content: Any, tool_input: Dict[str, Any] = None, is_streaming: bool = False
+        self,
+        content: Any,
+        tool_input: Dict[str, Any] = None,
+        is_streaming: bool = False,
     ) -> None:
         """
         Private helper to handle server_tool_use blocks (web_search and web_fetch).
@@ -858,7 +918,11 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
         # Log based on tool type
         if tool_name == "web_search":
-            query = input_to_use.get("query", "N/A") if isinstance(input_to_use, dict) else "N/A"
+            query = (
+                input_to_use.get("query", "N/A")
+                if isinstance(input_to_use, dict)
+                else "N/A"
+            )
             if is_streaming and tool_input is None:
                 # Initial log when tool starts (before input is parsed)
                 self.logger.info(
@@ -866,10 +930,18 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 )
             else:
                 # Log with query details
-                log_msg = f"Web search query {mode_prefix}" if is_streaming else "Web search initiated"
+                log_msg = (
+                    f"Web search query {mode_prefix}"
+                    if is_streaming
+                    else "Web search initiated"
+                )
                 self.logger.info(f"{log_msg} - ID: {tool_id}, Query: '{query}'")
         elif tool_name == "web_fetch":
-            url = input_to_use.get("url", "N/A") if isinstance(input_to_use, dict) else "N/A"
+            url = (
+                input_to_use.get("url", "N/A")
+                if isinstance(input_to_use, dict)
+                else "N/A"
+            )
             if is_streaming and tool_input is None:
                 # Initial log when tool starts (before input is parsed)
                 self.logger.info(
@@ -877,7 +949,11 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 )
             else:
                 # Log with URL details
-                log_msg = f"Web fetch URL {mode_prefix}" if is_streaming else "Web fetch initiated"
+                log_msg = (
+                    f"Web fetch URL {mode_prefix}"
+                    if is_streaming
+                    else "Web fetch initiated"
+                )
                 self.logger.info(f"{log_msg} - ID: {tool_id}, URL: '{url}'")
         else:
             # Generic server tool logging
@@ -901,9 +977,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             content: The web_search_tool_result content block
             is_streaming: Whether this is from streaming mode
         """
-        tool_use_id = (
-            content.tool_use_id if hasattr(content, "tool_use_id") else "N/A"
-        )
+        tool_use_id = content.tool_use_id if hasattr(content, "tool_use_id") else "N/A"
         mode_prefix = "in stream" if is_streaming else ""
 
         # Check for errors first (error is in content object, not array)
@@ -997,9 +1071,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             content: The web_fetch_tool_result content block
             is_streaming: Whether this is from streaming mode
         """
-        tool_use_id = (
-            content.tool_use_id if hasattr(content, "tool_use_id") else "N/A"
-        )
+        tool_use_id = content.tool_use_id if hasattr(content, "tool_use_id") else "N/A"
         mode_prefix = "in stream" if is_streaming else ""
 
         # Extract from nested structure: content.content (web_fetch_result)
@@ -1056,9 +1128,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                         else "N/A"
                     )
                     data = (
-                        source.get("data", "N/A")
-                        if isinstance(source, dict)
-                        else "N/A"
+                        source.get("data", "N/A") if isinstance(source, dict) else "N/A"
                     )
                     title = result_content.get("title", "N/A")
                 else:
@@ -1088,9 +1158,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                         if source and hasattr(source, "media_type")
                         else "N/A"
                     )
-                    data = (
-                        source.data if source and hasattr(source, "data") else "N/A"
-                    )
+                    data = source.data if source and hasattr(source, "data") else "N/A"
                     title = (
                         result_content.title
                         if hasattr(result_content, "title")
@@ -1119,7 +1187,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
     ) -> None:
         """
         Processes a complete response from the model.
-        Handles both text responses, tool use cases, and MCP tool calls.
+        Handles both text responses, tool use cases, MCP tool calls, and thinking blocks.
 
         Args:
             response: Complete response object from the model
@@ -1129,7 +1197,51 @@ class AnthropicEventHandler(AIAgentEventHandler):
         contents = []
         if response.stop_reason == "tool_use":
             for content in response.content:
-                if content.type == "text":
+                # Handle thinking blocks - must be included in contents for API
+                if content.type == "thinking":
+                    try:
+                        thinking_text = (
+                            content.thinking if hasattr(content, "thinking") else ""
+                        )
+                        thinking_signature = (
+                            content.signature if hasattr(content, "signature") else None
+                        )
+
+                        if thinking_text:
+                            # Add thinking block to contents with signature (required by Anthropic API)
+                            thinking_block = {
+                                "type": "thinking",
+                                "thinking": thinking_text,
+                            }
+                            # Signature is required when sending thinking blocks back to API
+                            if thinking_signature:
+                                thinking_block["signature"] = thinking_signature
+                            contents.append(thinking_block)
+
+                            # Also store thinking summary in final_output
+                            if self.final_output.get("reasoning_summary"):
+                                self.final_output["reasoning_summary"] = (
+                                    self.final_output["reasoning_summary"]
+                                    + "\n"
+                                    + thinking_text
+                                )
+                            else:
+                                self.final_output["reasoning_summary"] = thinking_text
+
+                            if self.logger.isEnabledFor(logging.DEBUG):
+                                self.logger.debug(
+                                    f"[handle_response] Captured thinking: {thinking_text[:100]}..."
+                                )
+                    except Exception as e:
+                        if self.logger.isEnabledFor(logging.ERROR):
+                            self.logger.error(f"Failed to process thinking block: {e}")
+                        if not self.final_output.get("reasoning_summary"):
+                            self.final_output["reasoning_summary"] = (
+                                "Error processing thinking"
+                            )
+                    continue
+
+                elif content.type == "text":
                     contents.append({"type": content.type, "text": content.text})
                     self.assistant_messages.append(
                         {
@@ -1169,8 +1281,38 @@ class AnthropicEventHandler(AIAgentEventHandler):
             final_content = ""
             output_files = []
             for content in response.content:
+                # Handle thinking blocks
+                if content.type == "thinking":
+                    try:
+                        thinking_text = (
+                            content.thinking if hasattr(content, "thinking") else ""
+                        )
+                        if thinking_text:
+                            # Store thinking summary in final_output
+                            if self.final_output.get("reasoning_summary"):
+                                self.final_output["reasoning_summary"] = (
+                                    self.final_output["reasoning_summary"]
+                                    + "\n"
+                                    + thinking_text
+                                )
+                            else:
+                                self.final_output["reasoning_summary"] = thinking_text
+
+                            if self.logger.isEnabledFor(logging.DEBUG):
+                                self.logger.debug(
+                                    f"[handle_response] Captured thinking: {thinking_text[:100]}..."
+                                )
+                    except Exception as e:
+                        if self.logger.isEnabledFor(logging.ERROR):
+                            self.logger.error(f"Failed to process thinking block: {e}")
+                        if not self.final_output.get("reasoning_summary"):
+                            self.final_output["reasoning_summary"] = (
+                                "Error processing thinking"
+                            )
+                    continue
+
                 # Handle MCP tool use blocks
-                if content.type == "mcp_tool_use":
+                elif content.type == "mcp_tool_use":
                     if self.logger.isEnabledFor(logging.INFO):
                         self.logger.info(
                             f"MCP tool call received - ID: {content.id}, Name: {content.name}, Server: {content.server_name}, Input: {content.input}."
@@ -1195,8 +1337,14 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 elif content.type == "server_tool_use":
                     # Log server tool use (web_search and web_fetch)
                     # In non-streaming mode, input is already available in content.input
-                    tool_input = content.input if hasattr(content, "input") else (content.get("input") if isinstance(content, dict) else {})
-                    self._handle_server_tool_use(content, tool_input=tool_input, is_streaming=False)
+                    tool_input = (
+                        content.input
+                        if hasattr(content, "input")
+                        else (content.get("input") if isinstance(content, dict) else {})
+                    )
+                    self._handle_server_tool_use(
+                        content, tool_input=tool_input, is_streaming=False
+                    )
                     continue
                 elif content.type == "web_search_tool_result":
                     self._handle_web_search_tool_result(content, is_streaming=False)
@@ -1213,9 +1361,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 # Log citations if present in text blocks
                 if hasattr(content, "citations") and content.citations:
                     self._handle_citations(
-                        content.citations,
-                        text_preview=content.text,
-                        is_streaming=False
+                        content.citations, text_preview=content.text, is_streaming=False
                     )
 
                 final_content += content.text
@@ -1223,12 +1369,14 @@ class AnthropicEventHandler(AIAgentEventHandler):
             if assistant_message_content:
                 final_content = assistant_message_content + " " + final_content
 
-            self.final_output = {
-                "message_id": response.id,
-                "role": response.role,
-                "content": final_content,
-                "output_files": output_files,
-            }
+            self.final_output.update(
+                {
+                    "message_id": response.id,
+                    "role": response.role,
+                    "content": final_content,
+                    "output_files": output_files,
+                }
+            )
 
     def handle_stream(
         self,
@@ -1262,6 +1410,17 @@ class AnthropicEventHandler(AIAgentEventHandler):
         # Use cached output format type (performance optimization)
         output_format = self.output_format_type
 
+        # Reasoning tracking variables (matching OpenAI and Ollama handler patterns)
+        reasoning_no = 0
+        reasoning_index = 0
+        accumulated_reasoning_parts = []  # For display/logging (just text)
+        accumulated_reasoning_blocks = []  # Complete blocks with signatures for API
+        accumulated_partial_reasoning_text = ""
+        reasoning_started = False
+        current_reasoning_block_index = None
+        current_reasoning_text_parts = []  # Accumulate text for current thinking block
+        current_reasoning_signature = ""  # Track signature for current thinking block
+
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug(
                 f"[handle_stream] Initialized stream state - "
@@ -1284,6 +1443,71 @@ class AnthropicEventHandler(AIAgentEventHandler):
             if chunk.type == "message_start":
                 message_id = chunk.message.id
 
+            # Handle thinking/reasoning block start
+            elif (
+                chunk.type == "content_block_start"
+                and hasattr(chunk.content_block, "type")
+                and chunk.content_block.type == "thinking"
+            ):
+                # Start reasoning block
+                reasoning_started = True
+                reasoning_index = 0
+                current_reasoning_block_index = (
+                    chunk.index if hasattr(chunk, "index") else 0
+                )
+                current_reasoning_text_parts = []  # Reset for new thinking block
+                current_reasoning_signature = (
+                    ""  # Reset signature for new thinking block
+                )
+
+                self.send_data_to_stream(
+                    index=reasoning_index,
+                    data_format=output_format,
+                    chunk_delta=f"<ReasoningStart Id={reasoning_no}/>",
+                    suffix=f"rs#{reasoning_no}",
+                )
+                reasoning_index += 1
+
+                if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
+                    elapsed = self._get_elapsed_time()
+                    self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Reasoning started")
+
+            # Handle thinking/reasoning text deltas
+            elif (
+                chunk.type == "content_block_delta"
+                and hasattr(chunk.delta, "type")
+                and chunk.delta.type == "thinking_delta"
+            ):
+                if not hasattr(chunk.delta, "thinking") or not chunk.delta.thinking:
+                    continue
+
+                reasoning_text = chunk.delta.thinking
+                print(reasoning_text, end="", flush=True)
+
+                # Accumulate reasoning text for current block and for display
+                current_reasoning_text_parts.append(reasoning_text)
+                accumulated_reasoning_parts.append(reasoning_text)
+                accumulated_partial_reasoning_text += reasoning_text
+
+                # Process and send reasoning text
+                reasoning_index, accumulated_partial_reasoning_text = (
+                    self.process_text_content(
+                        reasoning_index,
+                        accumulated_partial_reasoning_text,
+                        output_format,
+                        suffix=f"rs#{reasoning_no}",
+                    )
+                )
+
+            # Handle thinking signature deltas (encrypted signature for thinking blocks)
+            elif (
+                chunk.type == "content_block_delta"
+                and hasattr(chunk.delta, "type")
+                and chunk.delta.type == "signature_delta"
+            ):
+                if hasattr(chunk.delta, "signature"):
+                    current_reasoning_signature += chunk.delta.signature
+
             # Handle content block start for text (to capture citations metadata)
             elif (
                 chunk.type == "content_block_start"
@@ -1298,7 +1522,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     self._handle_citations(
                         chunk.content_block.citations,
                         text_preview=None,
-                        is_streaming=True
+                        is_streaming=True,
                     )
 
             # Handle citations delta
@@ -1445,8 +1669,59 @@ class AnthropicEventHandler(AIAgentEventHandler):
             ):
                 json_input_parts.append(chunk.delta.partial_json)
 
-            # Handle content block stop - parse JSON for server tools here
+            # Handle content block stop - parse JSON for server tools here and close reasoning blocks
             elif chunk.type == "content_block_stop":
+                # Check if we're closing a reasoning block
+                if reasoning_started and (
+                    current_reasoning_block_index is None
+                    or (
+                        hasattr(chunk, "index")
+                        and chunk.index == current_reasoning_block_index
+                    )
+                ):
+                    # Send any remaining reasoning text
+                    if len(accumulated_partial_reasoning_text) > 0:
+                        self.send_data_to_stream(
+                            index=reasoning_index,
+                            data_format=output_format,
+                            chunk_delta=accumulated_partial_reasoning_text,
+                            suffix=f"rs#{reasoning_no}",
+                        )
+                        accumulated_partial_reasoning_text = ""
+                        reasoning_index += 1
+
+                    # Create complete thinking block with signature for API
+                    current_thinking_text = "".join(current_reasoning_text_parts)
+                    if current_thinking_text:
+                        thinking_block = {
+                            "type": "thinking",
+                            "thinking": current_thinking_text,
+                        }
+                        # Add signature if present (required by API)
+                        if current_reasoning_signature:
+                            thinking_block["signature"] = current_reasoning_signature
+                        accumulated_reasoning_blocks.append(thinking_block)
+
+                    # End reasoning block
+                    self.send_data_to_stream(
+                        index=reasoning_index,
+                        data_format=output_format,
+                        chunk_delta=f"<ReasoningEnd Id={reasoning_no}/>",
+                        is_message_end=True,
+                        suffix=f"rs#{reasoning_no}",
+                    )
+                    reasoning_no += 1
+                    reasoning_started = False
+                    current_reasoning_block_index = None
+
+                    if self.enable_timeline_log and self.logger.isEnabledFor(
+                        logging.INFO
+                    ):
+                        elapsed = self._get_elapsed_time()
+                        self.logger.info(
+                            f"[TIMELINE] T+{elapsed:.2f}ms: Reasoning ended"
+                        )
+
                 # If we have server tool use data and JSON parts, parse and log immediately
                 if server_tool_use_data and json_input_parts:
                     try:
@@ -1459,7 +1734,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                             self._handle_server_tool_use(
                                 server_tool_use_data,
                                 tool_input=parsed_input,
-                                is_streaming=True
+                                is_streaming=True,
                             )
                     except json.JSONDecodeError as e:
                         if self.logger.isEnabledFor(logging.ERROR):
@@ -1505,7 +1780,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                         self._handle_server_tool_use(
                             server_tool_use_data,
                             tool_input=parsed_input,
-                            is_streaming=True
+                            is_streaming=True,
                         )
                 else:
                     # Empty JSON string, set empty dict as input
@@ -1530,20 +1805,26 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
         # Handle regular tool usage
         if stop_reason == "tool_use" and tool_use_data:
-            if self.accumulated_text:
-                content = [
-                    {"type": "text", "text": self.accumulated_text},
-                    tool_use_data,
-                ]
+            content = []
 
+            # Include thinking blocks first if present (required by Anthropic API when thinking is enabled)
+            # Use accumulated_reasoning_blocks which includes signatures
+            if accumulated_reasoning_blocks:
+                content.extend(accumulated_reasoning_blocks)
+
+            # Add text content if present
+            if self.accumulated_text:
+                content.append({"type": "text", "text": self.accumulated_text})
                 self.assistant_messages.append(
                     {
                         "content": self.accumulated_text,
                         "index": index,
                     }
                 )
-            else:
-                content = [tool_use_data]
+
+            # Add tool_use block
+            content.append(tool_use_data)
+
             input_messages.append(
                 {
                     "role": "assistant",
@@ -1594,12 +1875,31 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 assistant_message_content + " " + self.accumulated_text
             )
 
-        self.final_output = {
-            "message_id": message_id,
-            "role": "assistant",
-            "content": self.accumulated_text,
-            "output_files": output_files,
-        }
+        # Store accumulated reasoning summary if present
+        if accumulated_reasoning_parts:
+            final_reasoning_text = "".join(accumulated_reasoning_parts)
+            if self.final_output.get("reasoning_summary"):
+                # Accumulate reasoning from multiple rounds (e.g., function calls)
+                self.final_output["reasoning_summary"] = (
+                    self.final_output["reasoning_summary"] + "\n" + final_reasoning_text
+                )
+            else:
+                self.final_output["reasoning_summary"] = final_reasoning_text
+
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug(
+                    f"[handle_stream] Stored reasoning summary: {final_reasoning_text[:100]}..."
+                )
+
+        self.final_output = dict(
+            self.final_output,
+            **{
+                "message_id": message_id,
+                "role": "assistant",
+                "content": self.accumulated_text,
+                "output_files": output_files,
+            },
+        )
 
         # Signal that streaming has finished
         if stream_event:
