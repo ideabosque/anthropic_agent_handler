@@ -19,8 +19,9 @@ from typing import Any, Dict, List, Optional
 import anthropic
 import httpx
 import pendulum
-from ai_agent_handler import AIAgentEventHandler
 from httpx import Response
+
+from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility import Utility, convert_decimal_to_number
 
 
@@ -1716,7 +1717,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
                         index=reasoning_index,
                         data_format=output_format,
                         chunk_delta=f"<ReasoningEnd Id={reasoning_no}/>",
-                        is_message_end=True,
                         suffix=f"rs#{reasoning_no}",
                     )
                     reasoning_no += 1
