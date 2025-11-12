@@ -19,9 +19,8 @@ from typing import Any, Dict, List, Optional
 import anthropic
 import httpx
 import pendulum
-from httpx import Response
-
 from ai_agent_handler import AIAgentEventHandler
+from httpx import Response
 from silvaengine_utility import Utility, convert_decimal_to_number
 
 
@@ -1457,7 +1456,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
             ):
                 # Start reasoning block
                 reasoning_started = True
-                reasoning_index = 0
                 current_reasoning_block_index = (
                     chunk.index if hasattr(chunk, "index") else 0
                 )
@@ -1520,6 +1518,11 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 and hasattr(chunk.content_block, "type")
                 and chunk.content_block.type == "text"
             ):
+                # Synchronize index with reasoning_index when transitioning from reasoning to regular content
+                # This ensures sequential ordering when reasoning blocks complete before text content starts
+                if index == 0 and reasoning_index > 0:
+                    index = reasoning_index + 1
+
                 # Check if this text block has citations
                 if (
                     hasattr(chunk.content_block, "citations")
