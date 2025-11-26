@@ -1753,6 +1753,34 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     server_tool_use_data = None
                     json_input_parts = []
 
+                # Parse and clear JSON parts for regular tool_use when their blocks end
+                # This prevents JSON accumulation across multiple tool calls
+                elif tool_use_data and json_input_parts:
+                    try:
+                        json_str = "".join(json_input_parts).strip()
+                        if json_str:
+                            parsed_input = Utility.json_loads(json_str)
+                            tool_use_data["input"] = parsed_input
+                    except json.JSONDecodeError as e:
+                        if self.logger.isEnabledFor(logging.ERROR):
+                            self.logger.error(f"Error parsing tool_use JSON: {e}")
+                    # Clear JSON parts for next tool
+                    json_input_parts = []
+
+                # Parse and clear JSON parts for MCP tool_use when their blocks end
+                # This prevents JSON accumulation across multiple tool calls
+                elif mcp_tool_use_data and json_input_parts:
+                    try:
+                        json_str = "".join(json_input_parts).strip()
+                        if json_str:
+                            parsed_input = Utility.json_loads(json_str)
+                            mcp_tool_use_data["input"] = parsed_input
+                    except json.JSONDecodeError as e:
+                        if self.logger.isEnabledFor(logging.ERROR):
+                            self.logger.error(f"Error parsing mcp_tool_use JSON: {e}")
+                    # Clear JSON parts for next tool
+                    json_input_parts = []
+
             # Handle message delta for stop reason
             elif chunk.type == "message_delta":
                 stop_reason = chunk.delta.stop_reason
