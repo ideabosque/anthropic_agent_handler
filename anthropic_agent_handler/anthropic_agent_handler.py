@@ -23,6 +23,7 @@ from httpx import Response
 
 from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility import Utility, convert_decimal_to_number
+from silvaengine_utility.serializer import Serializer
 
 
 # ----------------------------
@@ -585,7 +586,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     {
                         "message": {
                             "role": self.agent["tool_call_role"],
-                            "content": Utility.json_dumps(
+                            "content": Serializer.json_dumps(
                                 {
                                     "tool": {
                                         "tool_call_id": function_call_data["id"],
@@ -696,7 +697,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
         try:
             # Cache JSON serialization to avoid duplicate work (performance optimization)
-            arguments_json = Utility.json_dumps(arguments)
+            arguments_json = Serializer.json_dumps(arguments)
 
             self.invoke_async_funct(
                 "async_insert_update_tool_call",
@@ -725,7 +726,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 "async_insert_update_tool_call",
                 **{
                     "tool_call_id": function_call_data["id"],
-                    "content": Utility.json_dumps(function_output),
+                    "content": Serializer.json_dumps(function_output),
                     "status": "completed",
                 },
             )
@@ -734,7 +735,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
         except Exception as e:
             log = traceback.format_exc()
             # Cache JSON serialization to avoid duplicate work (performance optimization)
-            arguments_json = Utility.json_dumps(arguments)
+            arguments_json = Serializer.json_dumps(arguments)
             self.invoke_async_funct(
                 "async_insert_update_tool_call",
                 **{
@@ -1736,7 +1737,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     try:
                         json_str = "".join(json_input_parts).strip()
                         if json_str:
-                            parsed_input = Utility.json_loads(json_str)
+                            parsed_input = Serializer.json_loads(json_str)
                             server_tool_use_data["input"] = parsed_input
 
                             # Log server tool with parsed input
@@ -1759,7 +1760,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     try:
                         json_str = "".join(json_input_parts).strip()
                         if json_str:
-                            parsed_input = Utility.json_loads(json_str)
+                            parsed_input = Serializer.json_loads(json_str)
                             tool_use_data["input"] = parsed_input
                     except json.JSONDecodeError as e:
                         if self.logger.isEnabledFor(logging.ERROR):
@@ -1773,7 +1774,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     try:
                         json_str = "".join(json_input_parts).strip()
                         if json_str:
-                            parsed_input = Utility.json_loads(json_str)
+                            parsed_input = Serializer.json_loads(json_str)
                             mcp_tool_use_data["input"] = parsed_input
                     except json.JSONDecodeError as e:
                         if self.logger.isEnabledFor(logging.ERROR):
@@ -1805,7 +1806,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
                 # Only parse if we have actual content
                 if json_str:
-                    parsed_input = Utility.json_loads(json_str)
+                    parsed_input = Serializer.json_loads(json_str)
 
                     if tool_use_data:
                         tool_use_data["input"] = parsed_input
