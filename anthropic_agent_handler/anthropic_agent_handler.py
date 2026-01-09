@@ -19,9 +19,8 @@ from typing import Any, Dict, List, Optional
 import anthropic
 import httpx
 import pendulum
-from httpx import Response
-
 from ai_agent_handler import AIAgentEventHandler
+from httpx import Response
 from silvaengine_utility import Utility, convert_decimal_to_number
 
 
@@ -1465,13 +1464,13 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     ""  # Reset signature for new thinking block
                 )
 
-                self.send_data_to_stream(
-                    index=reasoning_index,
-                    data_format=output_format,
-                    chunk_delta=f"<ReasoningStart Id={reasoning_no}/>",
-                    suffix=f"rs#{reasoning_no}",
-                )
-                reasoning_index += 1
+                # self.send_data_to_stream(
+                #     index=reasoning_index,
+                #     data_format=output_format,
+                #     chunk_delta=f"<ReasoningStart Id={reasoning_no}/>",
+                #     suffix=f"rs#{reasoning_no}",
+                # )
+                # reasoning_index += 1
 
                 if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                     elapsed = self._get_elapsed_time()
@@ -1698,7 +1697,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                             suffix=f"rs#{reasoning_no}",
                         )
                         accumulated_partial_reasoning_text = ""
-                        reasoning_index += 1
+                        # reasoning_index += 1
 
                     # Create complete thinking block with signature for API
                     current_thinking_text = "".join(current_reasoning_text_parts)
@@ -1712,14 +1711,14 @@ class AnthropicEventHandler(AIAgentEventHandler):
                             thinking_block["signature"] = current_reasoning_signature
                         accumulated_reasoning_blocks.append(thinking_block)
 
-                    # End reasoning block
-                    self.send_data_to_stream(
-                        index=reasoning_index,
-                        data_format=output_format,
-                        chunk_delta=f"<ReasoningEnd Id={reasoning_no}/>",
-                        suffix=f"rs#{reasoning_no}",
-                    )
-                    reasoning_no += 1
+                    # # End reasoning block
+                    # self.send_data_to_stream(
+                    #     index=reasoning_index,
+                    #     data_format=output_format,
+                    #     chunk_delta=f"<ReasoningEnd Id={reasoning_no}/>",
+                    #     suffix=f"rs#{reasoning_no}",
+                    # )
+                    # reasoning_no += 1
                     reasoning_started = False
                     current_reasoning_block_index = None
 
