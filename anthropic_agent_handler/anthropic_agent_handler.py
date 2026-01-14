@@ -97,6 +97,7 @@ class AnthropicBetaVersion(str, Enum):
     FILES_API = "files-api-2025-04-14"
     WEB_FETCH = "web-fetch-2025-09-10"
     INTERLEAVED_THINKING = "interleaved-thinking-2025-05-14"
+    SKILLS = "skills-2025-10-02"
 
 
 # ----------------------------
@@ -184,6 +185,26 @@ class AnthropicEventHandler(AIAgentEventHandler):
                         "Extended thinking may not be enabled."
                     )
 
+        # Validate skills configuration if present
+        if "skills" in self.model_setting:
+            skills = self.model_setting["skills"]
+            if not isinstance(skills, list):
+                if self.logger and self.logger.isEnabledFor(logging.WARNING):
+                    self.logger.warning(
+                        "Skills configuration should be a list. "
+                        "Skills features may not work correctly."
+                    )
+            elif len(skills) > 8:
+                if self.logger and self.logger.isEnabledFor(logging.WARNING):
+                    self.logger.warning(
+                        f"Maximum 8 skills allowed per request, got {len(skills)}. "
+                        "Only the first 8 skills will be used."
+                    )
+                self.model_setting["skills"] = skills[:8]
+
+        # Container ID for multi-turn conversations with skills
+        self._container_id = None
+
         self.assistant_messages = []
 
         # Initialize timeline tracking
@@ -255,10 +276,39 @@ class AnthropicEventHandler(AIAgentEventHandler):
                         ]
                     api_params["thinking"] = thinking_param
 
-            # Filter out "thinking" from model_setting to avoid duplication
-            # since we handle it explicitly in api_params
+            # Add container configuration for skills
+            if "skills" in self.model_setting and isinstance(
+                self.model_setting["skills"], list
+            ):
+                skills = self.model_setting["skills"]
+                if skills:
+                    container = {"skills": skills}
+                    # Reuse container ID for multi-turn conversations
+                    if self._container_id:
+                        container["id"] = self._container_id
+                    api_params["container"] = container
+
+                    # Ensure code_execution tool is present (required for skills)
+                    tools = self.model_setting.get("tools", [])
+                    has_code_execution = any(
+                        tool.get("type") == "code_execution_20250825"
+                        or tool.get("name") == "code_execution"
+                        for tool in tools
+                    )
+                    if not has_code_execution:
+                        # Add code execution tool if not present
+                        if "tools" not in self.model_setting:
+                            self.model_setting["tools"] = []
+                        self.model_setting["tools"].append(
+                            {"type": "code_execution_20250825", "name": "code_execution"}
+                        )
+
+            # Filter out "thinking" and "skills" from model_setting to avoid duplication
+            # since we handle them explicitly in api_params
             filtered_model_setting = {
-                k: v for k, v in self.model_setting.items() if k != "thinking"
+                k: v
+                for k, v in self.model_setting.items()
+                if k not in ["thinking", "skills"]
             }
 
             if betas:
@@ -447,6 +497,17 @@ class AnthropicEventHandler(AIAgentEventHandler):
             # Enable interleaved thinking for Claude 4 models or when explicitly configured
             if thinking_config.get("type") in ["enabled", "interleaved"]:
                 betas.append(AnthropicBetaVersion.INTERLEAVED_THINKING.value)
+
+        # Check for skills configuration
+        # Skills require both skills beta and code execution beta
+        if "skills" in self.model_setting and isinstance(
+            self.model_setting["skills"], list
+        ):
+            if self.model_setting["skills"]:
+                betas.append(AnthropicBetaVersion.SKILLS.value)
+                # Skills require code execution tool
+                if AnthropicBetaVersion.CODE_EXECUTION.value not in betas:
+                    betas.append(AnthropicBetaVersion.CODE_EXECUTION.value)
 
         # Check for file-related content in messages
         for message in input_messages:
@@ -1195,14 +1256,40 @@ class AnthropicEventHandler(AIAgentEventHandler):
     ) -> None:
         """
         Processes a complete response from the model.
-        Handles both text responses, tool use cases, MCP tool calls, and thinking blocks.
+        Handles both text responses, tool use cases, MCP tool calls, thinking blocks,
+        and pause_turn for long-running skill operations.
 
         Args:
             response: Complete response object from the model
             input_messages: Current conversation history to update
         """
+        # Capture container ID for multi-turn conversations with skills
+        if hasattr(response, "container") and response.container:
+            self._container_id = response.container.id
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug(
+                    f"[handle_response] Container ID captured: {self._container_id}"
+                )
 
         contents = []
+
+        # Handle pause_turn for long-running skill operations
+        if response.stop_reason == "pause_turn":
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(
+                    "[handle_response] Received pause_turn - skill operation in progress"
+                )
+
+            # Add assistant's response to conversation and continue
+            input_messages.append({"role": "assistant", "content": response.content})
+
+            # Continue the conversation to let skill complete
+            response = self.invoke_model(
+                **{"input": input_messages, "stream": False}
+            )
+            self.handle_response(response, input_messages)
+            return
+
         if response.stop_reason == "tool_use":
             for content in response.content:
                 # Handle thinking blocks - must be included in contents for API
@@ -1450,6 +1537,13 @@ class AnthropicEventHandler(AIAgentEventHandler):
             # Handle message start event
             if chunk.type == "message_start":
                 message_id = chunk.message.id
+                # Capture container ID for multi-turn conversations with skills
+                if hasattr(chunk.message, "container") and chunk.message.container:
+                    self._container_id = chunk.message.container.id
+                    if self.logger.isEnabledFor(logging.DEBUG):
+                        self.logger.debug(
+                            f"[handle_stream] Container ID captured: {self._container_id}"
+                        )
 
             # Handle thinking/reasoning block start
             elif (
@@ -1842,6 +1936,33 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     )
                 raise Exception(f"Error parsing tool input JSON: {e}")
 
+        # Handle pause_turn for long-running skill operations
+        if stop_reason == "pause_turn":
+            if self.logger.isEnabledFor(logging.INFO):
+                self.logger.info(
+                    "[handle_stream] Received pause_turn - skill operation in progress"
+                )
+
+            # Build content from current state
+            content = []
+            if accumulated_reasoning_blocks:
+                content.extend(accumulated_reasoning_blocks)
+            if self.accumulated_text:
+                content.append({"type": "text", "text": self.accumulated_text})
+
+            # Add assistant's response to conversation and continue
+            if content:
+                input_messages.append({"role": "assistant", "content": content})
+
+            # Continue the conversation to let skill complete
+            response = self.invoke_model(
+                **{"input": input_messages, "stream": bool(stream_event)}
+            )
+            self.handle_stream(
+                response, input_messages=input_messages, stream_event=stream_event
+            )
+            return
+
         # Handle regular tool usage
         if stop_reason == "tool_use" and tool_use_data:
             content = []
@@ -1982,9 +2103,265 @@ class AnthropicEventHandler(AIAgentEventHandler):
             and kwargs["encoded_content"]
             and file.downloadable
         ):
-            response: Response = self.client.beta.files.download(kwargs["file_id"])
+            response = self.client.beta.files.download(kwargs["file_id"])
             content = response.content  # Get the actual bytes data)
             # Convert the content to a Base64-encoded string
             uploaded_file["encoded_content"] = base64.b64encode(content).decode("utf-8")
 
         return uploaded_file
+
+    # ----------------------------
+    # Skill Management Methods
+    # ----------------------------
+
+    def list_skills(
+        self, source: Optional[str] = None, limit: int = 20, after: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List all available skills.
+
+        Args:
+            source: Filter by skill source - "anthropic" for pre-built skills,
+                   "custom" for user-uploaded skills, or None for all
+            limit: Maximum number of skills to return (default 20)
+            after: Cursor for pagination
+
+        Returns:
+            Dictionary containing:
+                - data: List of skill objects
+                - has_more: Boolean indicating if more results exist
+                - first_id: ID of first skill in results
+                - last_id: ID of last skill in results
+        """
+        params = {"betas": [AnthropicBetaVersion.SKILLS.value], "limit": limit}
+        if source:
+            params["source"] = source
+        if after:
+            params["after"] = after
+
+        skills = self.client.beta.skills.list(**params)
+
+        return {
+            "data": [
+                {
+                    "id": skill.id,
+                    "display_title": skill.display_title,
+                    "source": skill.source,
+                    "latest_version": skill.latest_version,
+                    "created_at": skill.created_at,
+                }
+                for skill in skills.data
+            ],
+            "has_more": skills.has_more,
+            "first_id": skills.first_id,
+            "last_id": skills.last_id,
+        }
+
+    def get_skill(self, skill_id: str) -> Dict[str, Any]:
+        """
+        Retrieve details about a specific skill.
+
+        Args:
+            skill_id: The ID of the skill to retrieve
+
+        Returns:
+            Dictionary containing skill details
+        """
+        skill = self.client.beta.skills.retrieve(
+            skill_id=skill_id, betas=[AnthropicBetaVersion.SKILLS.value]
+        )
+
+        return {
+            "id": skill.id,
+            "display_title": skill.display_title,
+            "source": skill.source,
+            "latest_version": skill.latest_version,
+            "created_at": skill.created_at,
+        }
+
+    def create_skill(
+        self, display_title: str, files: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Create a new custom skill.
+
+        Args:
+            display_title: Display name for the skill
+            files: List of file dictionaries with keys:
+                - filename: Name of the file (must include path, e.g., "skill_dir/SKILL.md")
+                - content: File content as bytes or file-like object
+                - mime_type: Optional MIME type
+
+        Returns:
+            Dictionary containing created skill details
+
+        Note:
+            - Must include a SKILL.md file at the top level
+            - All files must specify a common root directory in their paths
+            - Total upload size must be under 8MB
+        """
+        # Convert file dictionaries to tuples for the API
+        file_tuples = []
+        for file_dict in files:
+            if "encoded_content" in file_dict:
+                content = base64.b64decode(file_dict["encoded_content"])
+            else:
+                content = file_dict.get("content", b"")
+
+            file_tuple = (
+                file_dict["filename"],
+                BytesIO(content) if isinstance(content, bytes) else content,
+            )
+            if "mime_type" in file_dict:
+                file_tuple = file_tuple + (file_dict["mime_type"],)
+            file_tuples.append(file_tuple)
+
+        skill = self.client.beta.skills.create(
+            display_title=display_title,
+            files=file_tuples,
+            betas=[AnthropicBetaVersion.SKILLS.value],
+        )
+
+        return {
+            "id": skill.id,
+            "display_title": skill.display_title,
+            "source": skill.source,
+            "latest_version": skill.latest_version,
+            "created_at": skill.created_at,
+        }
+
+    def delete_skill(self, skill_id: str) -> Dict[str, Any]:
+        """
+        Delete a custom skill.
+
+        Args:
+            skill_id: The ID of the skill to delete
+
+        Returns:
+            Dictionary confirming deletion
+
+        Note:
+            All versions of the skill must be deleted before the skill can be deleted.
+        """
+        # First delete all versions
+        versions = self.client.beta.skills.versions.list(
+            skill_id=skill_id, betas=[AnthropicBetaVersion.SKILLS.value]
+        )
+
+        for version in versions.data:
+            self.client.beta.skills.versions.delete(
+                skill_id=skill_id,
+                version=version.version,
+                betas=[AnthropicBetaVersion.SKILLS.value],
+            )
+
+        # Then delete the skill
+        self.client.beta.skills.delete(
+            skill_id=skill_id, betas=[AnthropicBetaVersion.SKILLS.value]
+        )
+
+        return {"id": skill_id, "deleted": True}
+
+    def list_skill_versions(
+        self, skill_id: str, limit: int = 20, after: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        List all versions of a skill.
+
+        Args:
+            skill_id: The ID of the skill
+            limit: Maximum number of versions to return (default 20)
+            after: Cursor for pagination
+
+        Returns:
+            Dictionary containing:
+                - data: List of version objects
+                - has_more: Boolean indicating if more results exist
+        """
+        params = {"betas": [AnthropicBetaVersion.SKILLS.value], "limit": limit}
+        if after:
+            params["after"] = after
+
+        versions = self.client.beta.skills.versions.list(skill_id=skill_id, **params)
+
+        return {
+            "data": [
+                {
+                    "version": version.version,
+                    "created_at": version.created_at,
+                }
+                for version in versions.data
+            ],
+            "has_more": versions.has_more,
+        }
+
+    def create_skill_version(
+        self, skill_id: str, files: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Create a new version of an existing skill.
+
+        Args:
+            skill_id: The ID of the skill to update
+            files: List of file dictionaries with keys:
+                - filename: Name of the file
+                - content: File content as bytes or file-like object
+                - mime_type: Optional MIME type
+
+        Returns:
+            Dictionary containing created version details
+        """
+        # Convert file dictionaries to tuples for the API
+        file_tuples = []
+        for file_dict in files:
+            if "encoded_content" in file_dict:
+                content = base64.b64decode(file_dict["encoded_content"])
+            else:
+                content = file_dict.get("content", b"")
+
+            file_tuple = (
+                file_dict["filename"],
+                BytesIO(content) if isinstance(content, bytes) else content,
+            )
+            if "mime_type" in file_dict:
+                file_tuple = file_tuple + (file_dict["mime_type"],)
+            file_tuples.append(file_tuple)
+
+        version = self.client.beta.skills.versions.create(
+            skill_id=skill_id,
+            files=file_tuples,
+            betas=[AnthropicBetaVersion.SKILLS.value],
+        )
+
+        return {
+            "version": version.version,
+            "created_at": version.created_at,
+        }
+
+    def delete_skill_version(self, skill_id: str, version: str) -> Dict[str, Any]:
+        """
+        Delete a specific version of a skill.
+
+        Args:
+            skill_id: The ID of the skill
+            version: The version to delete
+
+        Returns:
+            Dictionary confirming deletion
+        """
+        self.client.beta.skills.versions.delete(
+            skill_id=skill_id,
+            version=version,
+            betas=[AnthropicBetaVersion.SKILLS.value],
+        )
+
+        return {"skill_id": skill_id, "version": version, "deleted": True}
+
+    def reset_container(self) -> None:
+        """
+        Reset the container ID, useful when starting a new conversation
+        that should not share container state with previous conversations.
+        """
+        self._container_id = None
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug("[reset_container] Container ID reset")
