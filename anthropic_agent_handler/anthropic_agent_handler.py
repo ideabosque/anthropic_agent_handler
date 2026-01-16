@@ -21,7 +21,7 @@ import httpx
 import pendulum
 from ai_agent_handler import AIAgentEventHandler
 from httpx import Response
-from silvaengine_utility import Utility, convert_decimal_to_number
+from silvaengine_utility import Utility, convert_decimal_to_number, performance_monitor
 
 
 # ----------------------------
@@ -281,7 +281,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             self.logger.error(f"Error invoking model: {str(e)}")
             raise Exception(f"Failed to invoke model: {str(e)}")
 
-    @Utility.performance_monitor.monitor_operation(operation_name="Anthorpic")
+    @performance_monitor.monitor_operation(operation_name="Anthorpic")
     def ask_model(
         self,
         input_messages: List[Dict[str, Any]],
