@@ -25,6 +25,7 @@ from silvaengine_utility import (
     Serializer,
     convert_decimal_to_number,
     performance_monitor,
+    Debugger,
 )
 
 
@@ -282,7 +283,11 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
             return result
         except Exception as e:
-            self.logger.error(f"Error invoking model: {str(e)}")
+            Debugger.info(
+                variable=e,
+                stage=f"{__name__}:invoke_model",
+                delimiter="#",
+            )
             raise Exception(f"Failed to invoke model: {str(e)}")
 
     @performance_monitor.monitor_operation(operation_name="Anthorpic")
