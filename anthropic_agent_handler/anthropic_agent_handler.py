@@ -269,6 +269,12 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 k: v for k, v in self.model_setting.items() if k != "thinking"
             }
 
+            Debugger.info(
+                variable=**dict(filtered_model_setting, **api_params),
+                stage=f"{__name__} after filter",
+                delimiter="~"
+            )
+
             if betas:
                 api_params["betas"] = betas
                 result = self.client.beta.messages.create(
