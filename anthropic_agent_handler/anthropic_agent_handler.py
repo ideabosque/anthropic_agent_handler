@@ -153,12 +153,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
             "system": [{"type": "text", "text": self.agent["instructions"]}]
         }
 
-        Debugger.info(
-            variable=self.model_setting,
-            stage=f"{__name__}.__init__",
-            delimiter="H",
-        )
-
         for k, v in self.agent.get("configuration", {}).items():
             if k not in ["api_key", "text"]:
                 if k == "max_tokens":
@@ -198,6 +192,12 @@ class AnthropicEventHandler(AIAgentEventHandler):
         self._global_start_time = None
         self._ask_model_depth = 0
         self.enable_timeline_log = setting.get("enable_timeline_log", False)
+
+        Debugger.info(
+            variable=self.model_setting,
+            stage=f"{__name__}.__init__",
+            delimiter="H",
+        )
 
     def _get_elapsed_time(self) -> float:
         """
