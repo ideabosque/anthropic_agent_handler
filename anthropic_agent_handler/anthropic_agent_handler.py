@@ -368,16 +368,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
             if model_setting:
                 self.model_setting.update(model_setting)
 
-            Debugger.info(
-                variable=model_setting,
-                stage=f"{__name__}::::::::::::::::::::::::::::::::::",
-            )
-            Debugger.info(
-                variable=traceback.format_exc(),
-                stage=f"{__name__}.ask_model",
-                delimiter="O",
-            )
-
             # Clean up input messages to remove broken tool sequences (performance optimization)
             cleanup_start = pendulum.now("UTC")
             cleanup_end = pendulum.now("UTC")
