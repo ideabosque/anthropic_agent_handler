@@ -22,10 +22,10 @@ import pendulum
 from ai_agent_handler import AIAgentEventHandler
 from httpx import Response
 from silvaengine_utility import (
+    Debugger,
     Serializer,
     convert_decimal_to_number,
     performance_monitor,
-    Debugger,
 )
 
 
@@ -239,7 +239,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             Debugger.info(
                 variable=messages,
                 stage="after_convert_decimal_to_number",
-                delimiter="!"
+                delimiter="!!",
             )
 
             # Prepare API call parameters
@@ -271,8 +271,8 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
             Debugger.info(
                 variable=dict(filtered_model_setting, **api_params),
-                stage=f"{__name__} after filter",
-                delimiter="~"
+                stage=f"{__name__}-----after-----filter",
+                delimiter="~",
             )
 
             if betas:
@@ -367,6 +367,16 @@ class AnthropicEventHandler(AIAgentEventHandler):
             # Add model-specific settings if provided
             if model_setting:
                 self.model_setting.update(model_setting)
+
+            Debugger.info(
+                variable=model_setting,
+                stage=f"{__name__}::::::::::::::::::::::::::::::::::",
+            )
+            Debugger.info(
+                variable=traceback.format_exc(),
+                stage=f"{__name__}.ask_model",
+                delimiter="O",
+            )
 
             # Clean up input messages to remove broken tool sequences (performance optimization)
             cleanup_start = pendulum.now("UTC")
