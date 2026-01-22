@@ -145,7 +145,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             self.client = anthropic.AnthropicVertex(**vertex_credentials)
         else:
             self.client = anthropic.Anthropic(
-                api_key=self.agent["configuration"].get("api_key")
+                api_key=self.agent.get("configuration", {}).get("api_key")
             )
 
         # Convert Decimal to appropriate types and build model settings (performance optimization)
@@ -153,7 +153,13 @@ class AnthropicEventHandler(AIAgentEventHandler):
             "system": [{"type": "text", "text": self.agent["instructions"]}]
         }
 
-        for k, v in self.agent["configuration"].items():
+        Debugger.info(
+            variable=self.model_setting,
+            stage=f"{__name__}.__init__",
+            delimiter="H",
+        )
+
+        for k, v in self.agent.get("configuration", {}).items():
             if k not in ["api_key", "text"]:
                 if k == "max_tokens":
                     self.model_setting[k] = int(v)
@@ -270,7 +276,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             }
 
             Debugger.info(
-                variable=dict(filtered_model_setting, **api_params),
+                variable=api_params,
                 stage=f"{__name__}-----after-----filter",
                 delimiter="~",
             )
