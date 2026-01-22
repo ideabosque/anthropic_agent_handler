@@ -236,6 +236,12 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
             betas = self._get_betas(messages)
 
+            Debugger.info(
+                variable=messages,
+                stage="after_convert_decimal_to_number",
+                delimiter="!"
+            )
+
             # Prepare API call parameters
             api_params = {
                 "messages": messages,
