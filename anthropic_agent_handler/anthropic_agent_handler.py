@@ -270,7 +270,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             }
 
             Debugger.info(
-                variable=**dict(filtered_model_setting, **api_params),
+                variable=dict(filtered_model_setting, **api_params),
                 stage=f"{__name__} after filter",
                 delimiter="~"
             )
