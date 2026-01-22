@@ -193,12 +193,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
         self._ask_model_depth = 0
         self.enable_timeline_log = setting.get("enable_timeline_log", False)
 
-        Debugger.info(
-            variable=self.model_setting,
-            stage=f"{__name__}.__init__",
-            delimiter="H",
-        )
-
     def _get_elapsed_time(self) -> float:
         """
         Get elapsed time in milliseconds from the first ask_model call.
@@ -276,14 +270,8 @@ class AnthropicEventHandler(AIAgentEventHandler):
             }
 
             Debugger.info(
-                variable=api_params,
+                variable=filtered_model_setting,
                 stage=f"{__name__}-----after-----filter----1111111111",
-                delimiter="~",
-            )
-
-            Debugger.info(
-                variable=traceback.format_exc(),
-                stage=f"{__name__}-----after-----filter----2222222222",
                 delimiter="~",
             )
 
