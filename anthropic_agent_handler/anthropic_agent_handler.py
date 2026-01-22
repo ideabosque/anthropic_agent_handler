@@ -277,7 +277,13 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
             Debugger.info(
                 variable=api_params,
-                stage=f"{__name__}-----after-----filter",
+                stage=f"{__name__}-----after-----filter----1111111111",
+                delimiter="~",
+            )
+
+            Debugger.info(
+                variable=traceback.format_exc(),
+                stage=f"{__name__}-----after-----filter----2222222222",
                 delimiter="~",
             )
 
