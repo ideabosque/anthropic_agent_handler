@@ -229,18 +229,10 @@ class AnthropicEventHandler(AIAgentEventHandler):
         """
         try:
             invoke_start = pendulum.now("UTC")
-
             messages = list(filter(lambda x: bool(x["content"]), kwargs["input"]))
             # Convert any Decimal values to numbers for JSON serialization
             messages = convert_decimal_to_number(messages)
-
             betas = self._get_betas(messages)
-
-            Debugger.info(
-                variable=messages,
-                stage="after_convert_decimal_to_number",
-                delimiter="!!",
-            )
 
             # Prepare API call parameters
             api_params = {
@@ -268,12 +260,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
             filtered_model_setting = {
                 k: v for k, v in self.model_setting.items() if k != "thinking"
             }
-
-            Debugger.info(
-                variable=filtered_model_setting,
-                stage=f"{__name__}-----after-----filter----1111111111",
-                delimiter="~",
-            )
 
             if betas:
                 api_params["betas"] = betas
