@@ -19,8 +19,6 @@ from typing import Any, Dict, List, Optional
 import anthropic
 import httpx
 import pendulum
-from httpx import Response
-
 from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility import convert_decimal_to_number
 from silvaengine_utility.performance_monitor import performance_monitor
@@ -144,7 +142,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             self.client = anthropic.AnthropicVertex(**vertex_credentials)
         else:
             self.client = anthropic.Anthropic(
-                api_key=self.agent["configuration"].get("api_key")
+                api_key=self.agent.get("configuration", {}).get("api_key")
             )
 
         # Convert Decimal to appropriate types and build model settings (performance optimization)
@@ -152,7 +150,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             "system": [{"type": "text", "text": self.agent["instructions"]}]
         }
 
-        for k, v in self.agent["configuration"].items():
+        for k, v in self.agent.get("configuration", {}).items():
             if k not in ["api_key", "text"]:
                 if k == "max_tokens":
                     self.model_setting[k] = int(v)
@@ -248,11 +246,9 @@ class AnthropicEventHandler(AIAgentEventHandler):
         """
         try:
             invoke_start = pendulum.now("UTC")
-
             messages = list(filter(lambda x: bool(x["content"]), kwargs["input"]))
             # Convert any Decimal values to numbers for JSON serialization
             messages = convert_decimal_to_number(messages)
-
             betas = self._get_betas(messages)
 
             # Prepare API call parameters
@@ -334,10 +330,14 @@ class AnthropicEventHandler(AIAgentEventHandler):
 
             return result
         except Exception as e:
-            self.logger.error(f"Error invoking model: {str(e)}")
+            Debugger.info(
+                variable=e,
+                stage=f"{__name__}:invoke_model",
+                delimiter="#",
+            )
             raise Exception(f"Failed to invoke model: {str(e)}")
 
-    @performance_monitor.monitor_operation(operation_name="Anthropic")
+    @performance_monitor.monitor_operation(operation_name="Anthorpic")
     def ask_model(
         self,
         input_messages: List[Dict[str, Any]],
@@ -1561,13 +1561,13 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     ""  # Reset signature for new thinking block
                 )
 
-                self.send_data_to_stream(
-                    index=reasoning_index,
-                    data_format=output_format,
-                    chunk_delta=f"<ReasoningStart Id={reasoning_no}/>",
-                    suffix=f"rs#{reasoning_no}",
-                )
-                reasoning_index += 1
+                # self.send_data_to_stream(
+                #     index=reasoning_index,
+                #     data_format=output_format,
+                #     chunk_delta=f"<ReasoningStart Id={reasoning_no}/>",
+                #     suffix=f"rs#{reasoning_no}",
+                # )
+                # reasoning_index += 1
 
                 if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                     elapsed = self._get_elapsed_time()
@@ -1794,7 +1794,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
                             suffix=f"rs#{reasoning_no}",
                         )
                         accumulated_partial_reasoning_text = ""
-                        reasoning_index += 1
+                        # reasoning_index += 1
 
                     # Create complete thinking block with signature for API
                     current_thinking_text = "".join(current_reasoning_text_parts)
@@ -1808,14 +1808,14 @@ class AnthropicEventHandler(AIAgentEventHandler):
                             thinking_block["signature"] = current_reasoning_signature
                         accumulated_reasoning_blocks.append(thinking_block)
 
-                    # End reasoning block
-                    self.send_data_to_stream(
-                        index=reasoning_index,
-                        data_format=output_format,
-                        chunk_delta=f"<ReasoningEnd Id={reasoning_no}/>",
-                        suffix=f"rs#{reasoning_no}",
-                    )
-                    reasoning_no += 1
+                    # # End reasoning block
+                    # self.send_data_to_stream(
+                    #     index=reasoning_index,
+                    #     data_format=output_format,
+                    #     chunk_delta=f"<ReasoningEnd Id={reasoning_no}/>",
+                    #     suffix=f"rs#{reasoning_no}",
+                    # )
+                    # reasoning_no += 1
                     reasoning_started = False
                     current_reasoning_block_index = None
 
