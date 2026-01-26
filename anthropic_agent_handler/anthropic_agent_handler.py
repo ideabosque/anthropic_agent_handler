@@ -300,7 +300,10 @@ class AnthropicEventHandler(AIAgentEventHandler):
                         if "tools" not in self.model_setting:
                             self.model_setting["tools"] = []
                         self.model_setting["tools"].append(
-                            {"type": "code_execution_20250825", "name": "code_execution"}
+                            {
+                                "type": "code_execution_20250825",
+                                "name": "code_execution",
+                            }
                         )
 
             # Filter out "thinking" and "skills" from model_setting to avoid duplication
@@ -438,11 +441,10 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     input_messages,
                     stream_event=stream_event,
                 )
-                return None
+            else:
+                self.handle_response(response, input_messages)
 
-            self.handle_response(response, input_messages)
             return run_id
-
         except Exception as e:
             self.logger.error(f"Error in ask_model: {str(e)}")
             raise Exception(f"Failed to process model request: {str(e)}")
@@ -1284,9 +1286,7 @@ class AnthropicEventHandler(AIAgentEventHandler):
             input_messages.append({"role": "assistant", "content": response.content})
 
             # Continue the conversation to let skill complete
-            response = self.invoke_model(
-                **{"input": input_messages, "stream": False}
-            )
+            response = self.invoke_model(**{"input": input_messages, "stream": False})
             self.handle_response(response, input_messages)
             return
 
