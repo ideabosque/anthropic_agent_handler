@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 import anthropic
 import httpx
 import pendulum
+
 from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility import convert_decimal_to_number
 from silvaengine_utility.performance_monitor import performance_monitor
@@ -144,6 +145,18 @@ class AnthropicEventHandler(AIAgentEventHandler):
             self.client = anthropic.Anthropic(
                 api_key=self.agent.get("configuration", {}).get("api_key")
             )
+
+        if "enabled_tools" in self.agent["configuration"]:
+            # Add tools if available - matching example.py structure
+            enabled_tools = []
+            if "tools" in self.agent["configuration"]:
+                for tool in self.agent["configuration"]["tools"]:
+                    if tool["name"] not in self.agent["configuration"].get(
+                        "enabled_tools", []
+                    ):
+                        continue
+                    enabled_tools.append(tool)
+            self.agent["configuration"]["tools"] = enabled_tools
 
         # Convert Decimal to appropriate types and build model settings (performance optimization)
         self.model_setting = {
