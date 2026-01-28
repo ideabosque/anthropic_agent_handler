@@ -21,7 +21,7 @@ import httpx
 import pendulum
 
 from ai_agent_handler import AIAgentEventHandler
-from silvaengine_utility import convert_decimal_to_number
+from silvaengine_utility import Debugger, convert_decimal_to_number
 from silvaengine_utility.performance_monitor import performance_monitor
 from silvaengine_utility.serializer import Serializer
 
@@ -1573,14 +1573,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
                 current_reasoning_signature = (
                     ""  # Reset signature for new thinking block
                 )
-
-                # self.send_data_to_stream(
-                #     index=reasoning_index,
-                #     data_format=output_format,
-                #     chunk_delta=f"<ReasoningStart Id={reasoning_no}/>",
-                #     suffix=f"rs#{reasoning_no}",
-                # )
-                # reasoning_index += 1
 
                 if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                     elapsed = self._get_elapsed_time()
