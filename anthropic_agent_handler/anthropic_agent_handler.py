@@ -1573,14 +1573,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
                     ""  # Reset signature for new thinking block
                 )
 
-                # self.send_data_to_stream(
-                #     index=reasoning_index,
-                #     data_format=output_format,
-                #     chunk_delta=f"<ReasoningStart Id={reasoning_no}/>",
-                #     suffix=f"rs#{reasoning_no}",
-                # )
-                # reasoning_index += 1
-
                 if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
                     elapsed = self._get_elapsed_time()
                     self.logger.info(f"[TIMELINE] T+{elapsed:.2f}ms: Reasoning started")
