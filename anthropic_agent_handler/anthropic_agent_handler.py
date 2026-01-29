@@ -1536,6 +1536,9 @@ class AnthropicEventHandler(AIAgentEventHandler):
             )
 
         index = 0
+
+        Debugger.info(variable="Anthropic", stage=f"{__file__}.handle_stream")
+
         if self.assistant_messages:
             index = self.assistant_messages[-1]["index"]
             self.send_data_to_stream(
