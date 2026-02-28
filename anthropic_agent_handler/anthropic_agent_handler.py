@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 import anthropic
 import httpx
 import pendulum
+from httpx import Response
 
 from ai_agent_handler import AIAgentEventHandler
 from silvaengine_utility import Debugger, convert_decimal_to_number
