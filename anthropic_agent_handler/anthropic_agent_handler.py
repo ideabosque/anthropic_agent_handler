@@ -46,17 +46,17 @@ class HTTP2Client:
     def _initialize_client(self):
         """Initialize HTTP/2 client with optimized settings."""
         self._client = httpx.Client(
-            http2=True,  # Enable HTTP/2
+            http2=True,
             limits=httpx.Limits(
-                max_connections=100,  # Maximum concurrent connections
-                max_keepalive_connections=20,  # Keep connections alive for reuse
-                keepalive_expiry=30.0,  # Keep connections alive for 30 seconds
+                max_connections=100,
+                max_keepalive_connections=100,
+                keepalive_expiry=120.0,
             ),
             timeout=httpx.Timeout(
-                connect=10.0,  # Connection timeout
-                read=60.0,  # Read timeout
-                write=60.0,  # Write timeout
-                pool=5.0,  # Pool timeout
+                connect=10.0,
+                read=60.0,
+                write=60.0,
+                pool=5.0,
             ),
         )
 
