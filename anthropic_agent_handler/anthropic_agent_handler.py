@@ -127,9 +127,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
         """
         AIAgentEventHandler.__init__(self, logger, agent, **setting)
 
-        self.shorten_initial_system_prompt = setting.get(
-            "shorten_initial_system_prompt", True
-        )
         if all(
             setting.get(k) for k in ["aws_access_key", "aws_secret_key", "aws_region"]
         ):
@@ -163,7 +160,9 @@ class AnthropicEventHandler(AIAgentEventHandler):
             self.agent["configuration"]["tools"] = enabled_tools
 
         # Convert Decimal to appropriate types and build model settings (performance optimization)
-        self.model_setting = {}
+        self.model_setting = {
+            "system": self.agent["instructions"],
+        }
         for k, v in self.agent.get("configuration", {}).items():
             if k not in ["api_key", "text"]:
                 if k == "max_tokens":
@@ -244,28 +243,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
         if self.enable_timeline_log and self.logger.isEnabledFor(logging.INFO):
             self.logger.info("[TIMELINE] Timeline reset for new run")
 
-    def _get_system_instruction(self, message_count: int) -> str:
-        """
-        Return the appropriate system instruction based on conversation length.
-
-        Single message (first/single call) uses a lightweight prompt;
-        continuation calls (2+ messages) use the full agent instructions.
-
-        Args:
-            message_count: Total number of messages in the conversation
-
-        Returns:
-            The system instruction string
-        """
-        if message_count > 1:
-            return self.agent["instructions"]
-        if self.shorten_initial_system_prompt:
-            return (
-                f"You are a helpful {self.agent.get('agent_name', 'assistant')}"
-                f" with the instructions: {self.agent.get('agent_description', '')}."
-            )
-        return self.agent["instructions"]
-
     def invoke_model(self, **kwargs: Dict[str, Any]) -> Any:
         """
         Makes an API call to the Anthropic model with provided messages.
@@ -337,8 +314,6 @@ class AnthropicEventHandler(AIAgentEventHandler):
                                 "name": "code_execution",
                             }
                         )
-
-            self.model_setting["system"] = self._get_system_instruction(len(messages))
 
             # Filter out "thinking" and "skills" from model_setting to avoid duplication
             # since we handle them explicitly in api_params
