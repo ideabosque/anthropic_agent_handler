@@ -146,6 +146,8 @@ class AnthropicEventHandler(AIAgentEventHandler):
             self.client = anthropic.Anthropic(
                 api_key=self.agent.get("configuration", {}).get("api_key")
             )
+            if self.agent.get("configuration", {}).get("base_url"):
+                self.client.base_url = self.agent["configuration"]["base_url"]
 
         if "enabled_tools" in self.agent["configuration"]:
             # Add tools if available - matching example.py structure
