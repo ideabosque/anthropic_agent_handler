@@ -1583,6 +1583,12 @@ class AnthropicEventHandler(AIAgentEventHandler):
             index += 1
 
         for chunk in response_stream:
+            # Stop streaming if the client disconnected mid-generation.
+            if self.is_stream_cancelled():
+                self.logger.info(
+                    "Stream cancelled (client disconnected); stopping generation."
+                )
+                break
             # Handle message start event
             if chunk.type == "message_start":
                 message_id = chunk.message.id
